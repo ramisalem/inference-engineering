@@ -308,7 +308,7 @@
   }
 
   /* ---------------- GitHub: repo links + learner notes ----------------
-   * The course is hosted on GitHub Pages from REPO. On the hosted site, links to .md/.py files
+   * The course is hosted on GitHub Pages from REPO. On the hosted site (not file:// or localhost), links to .md/.py files
    * open on github.com (rendered, editable) instead of downloading raw text.
    * Lessons get a "My notes" box before the pager: it shows notes/<lesson-slug>.md, read live from
    * the GitHub API so an edit appears right away, with a button to edit it on GitHub. */
@@ -324,7 +324,7 @@
   }
 
   function initRepoLinks() {
-    if (!location.hostname.endsWith("github.io")) return;
+    if (location.protocol === "file:" || /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return;
     document.querySelectorAll('a[href$=".md"], a[href$=".py"]').forEach((a) => {
       const p = repoPath(a.getAttribute("href"));
       if (p) a.href = `${GH}/blob/main/${p}`;

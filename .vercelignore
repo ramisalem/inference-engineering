@@ -1,0 +1,9 @@
+# Never upload teacher-only files (mirrors .gitignore)
+NOTES.md
+learning-records
+.codesight
+__pycache__
+*.pyc
+.DS_Store
+.env*
+.vercel

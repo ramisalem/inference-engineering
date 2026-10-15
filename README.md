@@ -4,7 +4,7 @@ A self-paced course from app developer to inference engineer, following
 [roadmap.sh/inference-engineering](https://roadmap.sh/inference-engineering).
 12 Oct 2026 → 10 Jan 2027, about 5 hours a week, $0 of hardware beyond an M1 Pro and free Colab/Kaggle GPUs.
 
-**Read it:** https://ramisalem.github.io/inference-engineering/
+**Read it:** https://inference-engineering-ebon.vercel.app
 
 | Folder | What's in it |
 |---|---|
