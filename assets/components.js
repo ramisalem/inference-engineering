@@ -315,11 +315,13 @@
   const REPO = "ramisalem/inference-engineering";
   const GH = `https://github.com/${REPO}`;
 
+  // Relative path from this page to the site root: data-root on reference pages, "../" on lessons.
+  const siteRoot = () => document.body.dataset.root ?? (document.body.dataset.lesson ? "../" : "");
+
   function repoPath(href) {
     // Absolute URL of a same-site link → path inside the repo, or null.
     const u = new URL(href, location.href);
-    const base = location.pathname.replace(/[^/]*$/, "");
-    const root = new URL(document.body.dataset.root || "", location.origin + base).pathname;
+    const root = new URL(siteRoot(), location.href).pathname;
     return u.origin === location.origin && u.pathname.startsWith(root) ? u.pathname.slice(root.length) : null;
   }
 
@@ -334,8 +336,7 @@
   function initHomeLink() {
     const brand = document.querySelector(".topnav .brand");
     if (!brand || brand.closest("a")) return;
-    const root = document.body.dataset.root ?? (document.body.dataset.lesson ? "../" : "");
-    const a = el("a", { class: "brand", href: `${root}index.html` }, brand.textContent);
+    const a = el("a", { class: "brand", href: `${siteRoot()}index.html` }, brand.textContent);
     brand.replaceWith(a);
   }
 
@@ -394,8 +395,8 @@
         .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
         .catch(() => fetch(`../${path}`, { cache: "no-store" }).then((r) => (r.ok ? r.text() : Promise.reject(r.status))))
         .then((md) => {
-          const html = mdToHtml(md);
-          body.innerHTML = html.replace(/<h3>[^<]*<\/h3>/, "") || '<p class="muted">No notes yet.</p>';
+          const html = mdToHtml(md).replace(/<h3>[^<]*<\/h3>/, "");   // the box label replaces the file's title
+          body.innerHTML = /<(p|li|pre)\b/.test(html) ? html : '<p class="muted">Nothing written yet. Tap Edit to add notes, or questions for your teacher.</p>';
         })
         .catch(() => { body.innerHTML = `<p class="muted">Couldn't load your notes right now. Open <a href="${GH}/blob/main/${path}">${path}</a> on GitHub.</p>`; });
     };
