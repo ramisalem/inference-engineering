@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13-Week Schedule</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body data-root="../">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="syllabus.html">Syllabus</a>
+    <a href="schedule.html">Schedule</a>
+    <a href="../lessons/0001-first-served-model.html">Lesson 1</a>
+    <a href="latency-metrics.html">Latency metrics</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Reference · Schedule</span>
+    <h1>13-week schedule</h1>
+    <p class="subtitle">Monday 12 October 2026 → Sunday 10 January 2027. About 5 hours a week: 4–4.5 hours of planned work plus a little slack for the primary-source reading.</p>
+
+    <div class="key">
+      <span class="box-label">Where you are</span>
+      <p id="this-week">Loading…</p>
+    </div>
+
+    <h2>A typical week</h2>
+    <p>Three sessions of about 90 minutes beat one long Sunday, because spacing builds long-term memory.<span class="sn-ref"></span><span class="sidenote">Spacing and retrieval practice are among the best-supported learning techniques: see Dunlosky et al., <a href="https://doi.org/10.1177/1529100612453266">"Improving Students' Learning With Effective Learning Techniques"</a> (2013).</span></p>
+    <ul>
+      <li><strong>Session 1:</strong> lesson A (concept, prediction, lab, exercises).</li>
+      <li><strong>Session 2:</strong> lesson B.</li>
+      <li><strong>Session 3:</strong> lesson C, or the <em>spaced review</em>: re-do the exercises you missed earlier, read the lesson's primary source, and update <code>portfolio/LOG.md</code>.</li>
+    </ul>
+    <p>Behind schedule? Drop the stretch exercises in <span class="pill light">light</span> lessons first. Keep the reviews and the checkpoints: they protect everything else you've learned.</p>
+
+    <h2>Week by week</h2>
+    <div id="schedule-weeks"></div>
+
+    <h2>Milestones</h2>
+    <table>
+      <thead><tr><th>When</th><th>You can…</th></tr></thead>
+      <tbody>
+        <tr><td>End of W3</td><td>Explain everything that happens between sending a prompt and the last token, including the KV cache.</td></tr>
+        <tr><td>End of W5</td><td>Do roofline napkin math, and have your first vLLM deployment running on a GPU (Checkpoint A).</td></tr>
+        <tr><td>End of W9</td><td>Apply and measure quantization, speculative decoding, prefix caching and tensor parallelism (Checkpoint B).</td></tr>
+        <tr><td>End of W12</td><td>Run a containerized, autoscaled, observable model service with a cost model (Checkpoint C).</td></tr>
+        <tr><td>End of W13</td><td>Show a published capstone and pass a mock inference-engineering interview.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="pager">
+      <a href="syllabus.html">← Syllabus</a>
+      <a href="../lessons/0001-first-served-model.html">Start Lesson 1 →</a>
+    </div>
+  </article>
+</div>
+<script src="../assets/course-data.js"></script>
+<script src="../assets/course-pages.js"></script>
+<script src="../assets/components.js"></script>
+</body>
+</html>

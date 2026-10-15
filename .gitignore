@@ -1,0 +1,8 @@
+# Teacher-only files: kept on the Mac, not published
+NOTES.md
+learning-records/
+.codesight/
+
+__pycache__/
+*.pyc
+.DS_Store

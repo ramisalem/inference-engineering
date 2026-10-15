@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inference Engineering Course</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+  .hub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .9rem; margin: 1rem 0 1.5rem; }
+  .hub-grid a { display: block; padding: .85rem 1rem; border: 1px solid var(--rule); border-radius: 6px; text-decoration: none; color: inherit; min-width: 0; }
+  .hub-grid a:hover, .hub-grid a:focus-visible { border-color: var(--accent); }
+  .hub-grid strong { display: block; font-family: var(--sans); font-size: .95rem; }
+  .hub-grid span { display: block; font-size: .85rem; color: var(--muted); margin-top: .2rem; }
+  #ready-lessons { list-style: none; padding: 0; display: grid; gap: .4rem; }
+  #ready-lessons li { margin: 0; }
+</style>
+</head>
+<body data-root="">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="reference/syllabus.html">Syllabus</a>
+    <a href="reference/schedule.html">Schedule</a>
+    <a href="reference/latency-metrics.html">Latency metrics</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Your course · 12 Oct 2026 – 10 Jan 2027</span>
+    <h1>Inference Engineering</h1>
+    <p class="subtitle">From app developer to inference engineer in 13 weeks, following roadmap.sh/inference-engineering.</p>
+
+    <div class="key">
+      <span class="box-label">This week</span>
+      <p id="this-week">Loading the schedule…</p>
+    </div>
+
+    <h2>Lessons</h2>
+    <p class="muted" style="font-size:.9rem">New lessons appear here as your teacher writes them, one at a time.</p>
+    <ul id="ready-lessons"></ul>
+
+    <h2>Course pages</h2>
+    <div class="hub-grid">
+      <a href="reference/syllabus.html"><strong>Syllabus</strong><span>30 lessons in 8 parts, and how they cover the roadmap's 136 topics.</span></a>
+      <a href="reference/schedule.html"><strong>Schedule</strong><span>Week by week, with checkpoints and milestones.</span></a>
+      <a href="reference/latency-metrics.html"><strong>Latency metrics</strong><span>TTFT, ITL, decode TPS, E2E and throughput on one page.</span></a>
+      <a href="MISSION.md"><strong>Mission</strong><span>The goal, success criteria and constraints.</span></a>
+      <a href="RESOURCES.md"><strong>Resources</strong><span>The checked sources each lesson cites.</span></a>
+      <a href="https://github.com/ramisalem/inference-engineering/tree/main/notes"><strong>My notes</strong><span>One Markdown file per lesson. Edit on GitHub from any device; each lesson shows its notes at the bottom.</span></a>
+      <a href="portfolio/LOG.md"><strong>Lab log</strong><span>Your measured results and takeaways, lesson by lesson.</span></a>
+      <a href="labs/README.md"><strong>Lab guide</strong><span>Where each lab runs, the models we use, setup and gotchas.</span></a>
+      <a href="labs/tools/stream_probe.py"><strong>stream_probe.py</strong><span>Lesson 1's measuring tool, for reading. Run labs from your Mac copy.</span></a>
+      <a href="labs/tools/load_test.py"><strong>load_test.py</strong><span>Lesson 2's load tester: percentiles and throughput under concurrent load.</span></a>
+    </div>
+
+    <div class="ask">
+      <span class="box-label">Notes and progress</span>
+      <p>Your notes live in this course's GitHub repo, so they follow you to any device. Edit them on GitHub, and your teacher reads them before writing your next lesson. Exercise answers and "lesson complete" marks are saved in each browser separately.</p>
+    </div>
+  </article>
+</div>
+<script src="assets/course-data.js"></script>
+<script src="assets/course-pages.js"></script>
+<script src="assets/components.js"></script>
+<script>
+  (function () {
+    var ul = document.getElementById("ready-lessons");
+    var C = window.COURSE;
+    if (!ul || !C) return;
+    var ready = C.lessons.filter(function (l) { return l.ready; });
+    ul.innerHTML = ready.map(function (l) {
+      var n = String(l.n).padStart(2, "0");
+      var a = document.createElement("a");
+      a.href = "lessons/" + l.slug + ".html";
+      a.textContent = n + " · " + l.title;
+      return "<li>" + a.outerHTML + ' <span class="muted" style="font-size:.85rem">~' + l.hours + " h</span></li>";
+    }).join("") || "<li class='muted'>No lessons yet.</li>";
+  })();
+</script>
+</body>
+</html>

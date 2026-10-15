@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First Served Model</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body data-lesson="0001">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="../reference/syllabus.html">Syllabus</a>
+    <a href="../reference/schedule.html">Schedule</a>
+    <a href="../reference/latency-metrics.html">Latency metrics</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Lesson 1 of 30 · Part 1 · Outside in</span>
+    <h1>Your first served model</h1>
+    <p class="subtitle">Serve a model on your Mac and measure the four numbers every inference engineer works with: time to first token, inter-token latency, tokens per second, and end-to-end latency.</p>
+    <div class="meta"><span>Week 1</span><span>~90 minutes</span><span>Lab on your Mac with Ollama</span><span>No downloads needed</span></div>
+    <div class="covers">Roadmap nodes:
+      <span class="tag"><strong>Introduction</strong></span><span class="tag">Inference vs. Training</span><span class="tag">The Inference Stack</span><span class="tag">Time to First Token</span><span class="tag">Inter-Token Latency</span><span class="tag">Tokens Per Second</span>
+    </div>
+
+    <div class="key">
+      <span class="box-label">By the end of this lesson you can</span>
+      <ul>
+        <li>say how inference differs from training, and name the three layers of the inference stack;</li>
+        <li>measure TTFT, ITL, decode speed and end-to-end latency on a real model, with a tool you can read;</li>
+        <li>predict how each number moves when the prompt or the answer gets longer, and explain why.</li>
+      </ul>
+    </div>
+
+    <p class="mission-link">Why this matters for your mission: every technique in this course, from quantization to autoscaling, is judged by its effect on these numbers. Today you set the baseline that every later lab tries to beat.</p>
+
+    <h2>Training builds the model, inference serves it</h2>
+    <p><strong>Inference engineering</strong> is the practice of making generative AI models faster, cheaper and more reliable to serve in production.<span class="sn-ref"></span><span class="sidenote">The definition used by the <a href="https://roadmap.sh/inference-engineering">roadmap</a>, which is built around Baseten's book <a href="https://www.baseten.co/inference-engineering/digital-download/"><em>Inference Engineering</em></a>.</span> It exists because two very different jobs happen to a model.</p>
+    <p><strong>Training</strong> learns the model's weights from data. It's a huge batch job that runs for days or weeks and then ends. <strong>Inference</strong> takes those frozen weights and uses them to answer requests, around the clock, while users wait. Training success shows up in loss curves. Inference success shows up in time to first token, tokens per second, and uptime.<span class="sn-ref"></span><span class="sidenote">NVIDIA's classic explainer <a href="https://blogs.nvidia.com/blog/difference-deep-learning-training-inference-ai/">"What's the Difference Between Deep Learning Training and Inference?"</a> puts it simply: inference is where capabilities learned during training are put to work.</span></p>
+    <p>If you think in app terms, training is the build step that produces an artifact (a file of weights), and inference is running that artifact as a production service. A model is trained once per version. Inference happens on every single request.</p>
+
+    <h2>The inference stack</h2>
+    <p>A production inference system has three layers:<span class="sn-ref"></span><span class="sidenote">This three-layer split (runtime, infrastructure, tooling) is the roadmap's "The Inference Stack" node, taken from Baseten's book.</span></p>
+    <figure data-diagram="inference-stack" data-highlight="runtime" data-note="today: Ollama → llama.cpp → Apple GPU">
+      <figcaption>Most of this course lives in the runtime layer. Today you'll measure that layer from the outside, the way a user experiences it.</figcaption>
+    </figure>
+
+    <h2>Anatomy of a streamed response</h2>
+    <p>With streaming turned on, a chat API sends the answer as a stream of small chunks, usually one <strong>token</strong> each. A token is a word or a piece of a word.<span class="sn-ref"></span><span class="sidenote">Hugging Face's LLM course explains how text becomes tokens: <a href="https://huggingface.co/learn/llm-course/chapter2/4">"Tokenizers"</a>. You'll build intuition for this in Lesson 5.</span> Four numbers describe the stream:</p>
+
+    <figure data-diagram="stream-timeline">
+      <figcaption>The shape of every streamed answer. A long wait up front, then a steady rhythm.</figcaption>
+    </figure>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>What it measures</th><th>What mostly drives it</th></tr></thead>
+      <tbody>
+        <tr><td><strong>TTFT</strong>, time to first token</td><td>request sent → first token arrives</td><td>queueing + <em>prefill</em> (reading the whole prompt)</td></tr>
+        <tr><td><strong>ITL</strong>, inter-token latency</td><td>the gap between two consecutive tokens</td><td>one <em>decode</em> step (producing one token)</td></tr>
+        <tr><td><strong>TPS</strong>, decode tokens per second</td><td>how fast tokens arrive for one user, after the first</td><td>1000 ÷ mean ITL (in ms)</td></tr>
+        <tr><td><strong>E2E</strong>, end-to-end latency</td><td>request sent → last token arrives</td><td>all of the above, plus network and client</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="formula">E2E ≈ TTFT + (N − 1) × ITL &nbsp;&nbsp;&nbsp; where N = number of output tokens</div>
+    <p>Two phases hide behind those numbers. <strong>Prefill</strong> processes your entire prompt before the first token can appear. <strong>Decode</strong> then generates the answer one token at a time, each step building on the last. Lesson 6 opens both phases up. Today you only watch their footprints.</p>
+    <p>One naming note: some sources call ITL <em>time per output token</em> (TPOT). This course always says ITL.<span class="sn-ref"></span><span class="sidenote">NVIDIA defines TTFT, ITL, E2E and throughput precisely, including how benchmarks measure them, in <a href="https://docs.nvidia.com/nim/benchmarking/llm/metrics">"Metrics"</a> (NIM benchmarking guide). Databricks' <a href="https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices">"LLM Inference Performance Engineering: Best Practices"</a> uses TPOT for the same idea.</span> Also note that TPS here is <em>per user</em>. A server handling many users at once also has a <em>total</em> tokens per second. That's a throughput number, not a latency number, and the tension between the two is Lesson 2.</p>
+
+    <h2>Predict first</h2>
+    <p>Lock in these predictions before you run anything. They aren't graded. The lab results checker will tell you whether your data agrees.</p>
+    <div class="prediction" id="p-ttft" data-options="grows a lot|grows a little|stays about the same">
+      <p class="prompt">The prompt grows from about 80 tokens to about 1,400 (roughly 17×), and the answer length stays the same. What happens to <strong>TTFT</strong>?</p>
+    </div>
+    <div class="prediction" id="p-itl" data-options="grows a lot|grows a little|stays about the same">
+      <p class="prompt">Same change. What happens to <strong>ITL</strong>?</p>
+    </div>
+    <div class="prediction" id="p-e2e" data-options="about 8× longer|about 2× longer|about the same">
+      <p class="prompt">Now the prompt stays short, but the answer grows from 40 to 320 tokens (8×). What happens to <strong>end-to-end latency</strong>?</p>
+    </div>
+
+    <h2>Lab: measure your own model</h2>
+    <div class="lab">
+      <span class="box-label">Lab · ~45 minutes · your Mac</span>
+      <p>You'll use <a href="../labs/tools/stream_probe.py"><code>labs/tools/stream_probe.py</code></a>, a tool written for this course. It sends a streaming request to any OpenAI-compatible server and timestamps every chunk as it arrives. Skim it before you start. It's plain Python with no dependencies, and later lessons point it at llama.cpp and vLLM.</p>
+      <ol class="checklist" id="lab-steps">
+        <li><strong>Start the model server.</strong> Open the Ollama app, or run <code>ollama serve</code> in its own terminal tab. Check that it's up:
+<pre><code>curl localhost:11434/api/version</code></pre>
+          <span class="muted">Tip: on macOS, any <code>ollama</code> command can start the Ollama menu-bar app, which keeps a server running in the background. Quit it from the menu-bar icon after the lab to free the memory.</span></li>
+        <li><strong>Meet your model.</strong> Run <code>ollama show llama3.2</code>. Write down its parameter count, quantization and context length. You'll use them in later lessons.</li>
+        <li><strong>Watch a raw stream.</strong> This is exactly what a chat UI receives:
+<pre><code>curl -N localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","stream":true,"messages":[{"role":"user","content":"Name three planets."}]}'</code></pre>
+          Each <code>data: {…}</code> line is one Server-Sent Event carrying a small piece of text.<span class="sn-ref"></span><span class="sidenote">MDN: <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events">"Using server-sent events"</a>. Ollama mirrors OpenAI's API, see <a href="https://docs.ollama.com/api/openai-compatibility">"OpenAI compatibility"</a>.</span> Notice the pause before the first line, then the steady rhythm. The pause is TTFT, and the rhythm is ITL.</li>
+        <li><strong>Measure one request.</strong>
+<pre><code>cd ~/Desktop/learning
+python3 labs/tools/stream_probe.py --runs 3</code></pre>
+          The first line is an unmeasured warm-up. Compare its TTFT with the three measured runs.</li>
+        <li><strong>Experiment A: prompt length.</strong> This tests your first two predictions:
+<pre><code>python3 labs/tools/stream_probe.py --experiment prompt-length --runs 3 --md</code></pre></li>
+        <li><strong>Experiment B: answer length.</strong> This tests your third prediction:
+<pre><code>python3 labs/tools/stream_probe.py --experiment output-length --runs 2</code></pre>
+          Use the formula with your numbers: does TTFT + (N − 1) × ITL land close to the measured E2E?</li>
+        <li><strong>Experiment C: cold start, and the server's own clock.</strong>
+<pre><code>python3 labs/tools/stream_probe.py --experiment cold-start --server-timings</code></pre>
+          The first request forces Ollama to load the model into memory again. The "server clock" line is Ollama's own split of the request into load, prefill and decode time.<span class="sn-ref"></span><span class="sidenote">These come from the timing fields in Ollama's native API responses (<code>load_duration</code>, <code>prompt_eval_duration</code>, <code>eval_duration</code>, in nanoseconds). See Ollama's API docs, <a href="https://docs.ollama.com/api/usage">"Usage"</a>.</span> Compare the server's load + prefill with the TTFT your client measured. The small gap is HTTP and client overhead.</li>
+        <li><strong>A mystery.</strong> Run Experiment A again, but let the server see the same prompt repeatedly:
+<pre><code>python3 labs/tools/stream_probe.py --experiment prompt-length --runs 2 --no-cache-bust</code></pre>
+          Look at the long prompt's TTFT on the repeated runs. Write a one-line guess for why it changed. Lesson 19 explains it, or ask your teacher now.
+          <details><summary>Hint (only after you've guessed)</summary>Add <code>--server-timings</code> to the same command and compare the server's <em>prefill</em> time with the prompt's token count. Then read how Ollama's <a href="https://docs.ollama.com/api/usage">Usage</a> page defines <code>prompt_eval_duration</code>: the time "to evaluate the <em>uncached</em> prompt tokens".</details></li>
+        <li><strong>Check your results</strong> in the form below.</li>
+        <li><strong>Log it.</strong> Paste the markdown table from Experiment A into <a href="../portfolio/LOG.md"><code>portfolio/LOG.md</code></a>, add your cold and warm TTFT, and write a one-sentence takeaway in your own words. Optionally, save the raw data by re-running Experiment A with <code>--json portfolio/data/0001-prompt-length.json</code> added.</li>
+      </ol>
+    </div>
+
+    <form class="lab-results" data-check="l01" id="l01-results">
+      <p><strong>Your results.</strong> Copy numbers from the <em>Summary</em> tables. Fill in any subset, then check.</p>
+      <div class="grid">
+        <label>A · short prompt · TTFT p50 (ms)<input name="ttft_short" inputmode="decimal"></label>
+        <label>A · long prompt · TTFT p50 (ms)<input name="ttft_long" inputmode="decimal"></label>
+        <label>A · short prompt · ITL mean (ms)<input name="itl_short" inputmode="decimal"></label>
+        <label>A · long prompt · ITL mean (ms)<input name="itl_long" inputmode="decimal"></label>
+        <label>A · short prompt · decode tok/s<input name="tps_short" inputmode="decimal"></label>
+        <label>B · short answer · E2E p50 (ms)<input name="e2e_sa" inputmode="decimal"></label>
+        <label>B · long answer · TTFT p50 (ms)<input name="ttft_la" inputmode="decimal"></label>
+        <label>B · long answer · ITL mean (ms)<input name="itl_la" inputmode="decimal"></label>
+        <label>B · long answer · output tokens<input name="n_la" inputmode="decimal"></label>
+        <label>B · long answer · E2E p50 (ms)<input name="e2e_la" inputmode="decimal"></label>
+        <label>C · cold · TTFT (ms)<input name="ttft_cold" inputmode="decimal"></label>
+        <label>C · warm · TTFT (ms)<input name="ttft_warm" inputmode="decimal"></label>
+      </div>
+      <button class="btn" type="submit">Check my results</button>
+    </form>
+
+    <h2>Exercises</h2>
+    <p>Answer from memory first. Wrong answers are useful here: they show you exactly what to re-read.</p>
+    <div class="exercise-set">
+      <div class="mcq" id="q-symptom">
+        <p class="prompt">Users say your chatbot "thinks for ages before it starts typing, then types smoothly." Which number is the problem?</p>
+        <ul>
+          <li data-correct>Time until the first token is high</li>
+          <li>The gap between tokens is too high</li>
+          <li>Decode tokens per second is too low</li>
+          <li>The answers are too many tokens long</li>
+        </ul>
+        <div class="explanation">"Thinks before typing" is the wait for the first token: <strong>TTFT</strong>. "Then types smoothly" means ITL is fine. TTFT is mostly queueing plus prefill, so the first suspects are a long prompt, a busy server or a cold model. You saw all three effects in the lab.</div>
+      </div>
+
+      <div class="mcq" id="q-inference">
+        <p class="prompt">Which of these is <em>inference</em>, rather than training?</p>
+        <ul>
+          <li data-correct>Serving fixed weights to answer live requests</li>
+          <li>Updating weights from data in large batches</li>
+          <li>Tracking loss curves to judge learning progress</li>
+          <li>Collecting and labeling examples for the model</li>
+        </ul>
+        <div class="explanation">Training <em>learns</em> the weights. Inference <em>uses</em> the frozen weights to serve requests continuously, under latency targets. Loss curves and labeled data belong to training.</div>
+      </div>
+
+      <div class="mcq" id="q-stack">
+        <p class="prompt">Your team turns on quantization and prefix caching on a single GPU server. Which layer of the inference stack is that?</p>
+        <ul>
+          <li data-correct>The runtime layer</li>
+          <li>The infrastructure layer</li>
+          <li>The tooling layer</li>
+          <li>The application layer</li>
+        </ul>
+        <div class="explanation">The <strong>runtime</strong> layer makes one model fast on one machine, through batching, caching, quantization and speculation. Infrastructure deals with many machines. Tooling is how engineers control both.</div>
+      </div>
+
+      <div class="mcq" id="q-prompt-length">
+        <p class="prompt">You double the length of the prompt and keep the answer length the same. What do you expect?</p>
+        <ul>
+          <li data-correct>TTFT rises; inter-token latency stays similar</li>
+          <li>Inter-token latency rises; TTFT stays similar</li>
+          <li>Both rise roughly in proportion together</li>
+          <li>Neither changes; output length is fixed</li>
+        </ul>
+        <div class="explanation">A longer prompt means more <strong>prefill</strong> work before the first token, so TTFT rises. Each <strong>decode</strong> step costs about the same, so ITL barely moves. That's the pattern from Experiment A.</div>
+      </div>
+
+      <div class="mcq" id="q-cold">
+        <p class="prompt">Right after a deploy, the very first request is several times slower than every request after it. What's the most likely cause?</p>
+        <ul>
+          <li data-correct>Model weights are loading into memory</li>
+          <li>The prompt is longer than usual</li>
+          <li>Decode steps get slower over time</li>
+          <li>Network bandwidth limits the token stream</li>
+        </ul>
+        <div class="explanation">A cold server has to load gigabytes of weights into memory before prefill can even start. On your Mac that was about a second for a 2 GB model on a fast local SSD. In production, weights may first have to come over the network, so cold starts can be far worse. Lesson 25 is about fighting them.</div>
+      </div>
+
+      <div class="numeric" id="n-e2e" data-answer="8350" data-tol="0.01" data-unit="ms">
+        <p class="prompt">A response's first token arrives after 350 ms. After that, a token arrives every 20 ms. The answer is 401 tokens long. What is the end-to-end latency?</p>
+        <div class="solution">E2E ≈ TTFT + (N − 1) × ITL = 350 + 400 × 20 = 350 + 8,000 = <strong>8,350 ms</strong>. It's N − 1 because the first token's time is already inside TTFT.</div>
+      </div>
+
+      <div class="numeric" id="n-tps" data-answer="54.6" data-tol="0.02" data-unit="tokens/s">
+        <p class="prompt">Your mean ITL is 18.3 ms. What decode speed is that, in tokens per second?</p>
+        <div class="solution">TPS = 1000 ÷ ITL in ms = 1000 ÷ 18.3 ≈ <strong>54.6 tokens/s</strong>. That's the decode speed measured when this lab was tested on your Mac.</div>
+      </div>
+
+      <div class="numeric" id="n-budget" data-answer="14.72" data-tol="0.03" data-unit="ms">
+        <p class="prompt">Product requirement: a 300-token answer must finish within 5 seconds. TTFT is 600 ms. What's the largest mean ITL you can afford?</p>
+        <div class="solution">The decode budget is 5,000 − 600 = 4,400 ms, spread over N − 1 = 299 gaps: 4,400 ÷ 299 ≈ <strong>14.7 ms per token</strong>, about 68 tokens/s. Your Mac's ~18 ms ITL wouldn't meet this. A faster GPU, a smaller or quantized model, or speculative decoding might (Parts 3–5).</div>
+      </div>
+
+      <div class="numeric" id="n-per-user" data-answer="50" data-tol="0.02" data-unit="tokens/s per user">
+        <p class="prompt">A server streams 2,000 tokens per second in total, shared evenly by 40 users at once. Roughly what decode speed does each user see?</p>
+        <div class="solution">2,000 ÷ 40 = <strong>50 tokens/s per user</strong>. The 2,000 is <em>throughput</em>, a property of the server. The 50 is per-user TPS, a <em>latency</em> number each user feels. Adding users usually raises the first and lowers the second. Lesson 2 measures that trade-off on your own server.</div>
+      </div>
+
+      <div class="explain" id="e-why">
+        <p class="prompt">From memory, in two or three sentences: why did TTFT grow with the prompt while ITL barely changed? Use the words <em>prefill</em> and <em>decode</em>.</p>
+        <div class="model-answer"><strong>Model answer.</strong> Before the first token can appear, the server runs <em>prefill</em> over the whole prompt, so a longer prompt means more work up front and a higher TTFT. After that, each token comes from one <em>decode</em> step, which costs about the same however long the prompt was, so ITL stays nearly flat. (It creeps up slightly, because each step still looks back at all earlier tokens. Lesson 6 explains how.)</div>
+      </div>
+    </div>
+
+    <div class="scoreboard"></div>
+
+    <h2>Make it stick</h2>
+    <p>Come back on <strong>day 3</strong> and again on <strong>day 7</strong>. Press <em>Reset exercises</em> and redo them from memory, without re-reading first. The effort of recalling is what moves this from "I followed along" to "I know it". The one-page <a href="../reference/latency-metrics.html">latency metrics reference</a> has every formula from this lesson.</p>
+
+    <div class="source">
+      <span class="box-label">Primary source · read after the lab (~20 min)</span>
+      <p><a href="https://docs.nvidia.com/nim/benchmarking/llm/metrics"><strong>"Metrics"</strong>, NVIDIA NIM LLM Benchmarking Guide</a>. These are the precise definitions of TTFT, ITL, E2E latency and throughput that industry benchmark tools implement, including details like whether ITL includes the first token. Compare its definitions with what <code>stream_probe.py</code> measures. Can you spot one difference?</p>
+      <details><summary>Answer (after you've read it)</summary>NVIDIA's <em>TPS per user</em> divides the output length by the whole end-to-end latency, so TTFT is included. <code>stream_probe.py</code>'s <em>decode tok/s</em> only counts the time after the first token, so it reports a higher number for the same request. NVIDIA's headline <em>TPS</em> is something else again: total output tokens per second across <em>all</em> simultaneous requests, which is system throughput. The page itself warns that "tool implementations vary, so compare results only when definitions align". That's a habit worth stealing: always say how you measured.</details>
+    </div>
+
+    <div class="ask">
+      <span class="box-label">Ask your teacher</span>
+      <p>Your teacher is in the terminal where this course was built. Ask anything that's unclear or that you're curious about, for example "Why is prefill so much faster per token than decode?" or "What would these numbers look like on a cloud GPU?" When you finish, tell your teacher how the lesson went: what clicked, what didn't, and your lab numbers. Lesson 2 gets written from that.</p>
+    </div>
+
+    <div class="pager">
+      <a href="../reference/syllabus.html">← Syllabus</a>
+      <a href="0002-latency-vs-throughput.html">Next: Lesson 2, latency vs throughput →</a>
+    </div>
+  </article>
+</div>
+
+<script>
+  /* Lesson-specific checker for the lab results form (feedback loop for the lab). */
+  window.LabChecks = window.LabChecks || {};
+  LabChecks.l01 = function (v) {
+    const out = [];
+    const has = (...ks) => ks.every((k) => Number.isFinite(v[k]) && v[k] > 0);
+    const predicted = (id) => IECourse.store.get(IECourse.key(id), null);
+    const growth = (r) => (r > 2 ? "grows a lot" : r > 1.15 ? "grows a little" : "stays about the same");
+    const comparePrediction = (id, actual, label) => {
+      const p = predicted(id);
+      if (!p) return;
+      out.push(p === actual
+        ? { ok: true, msg: `Your prediction for ${label} (“${p}”) matches your data.` }
+        : { ok: false, msg: `You predicted ${label} would be “${p}”; your data says “${actual}”. Spend two minutes on why before moving on. That gap is where the learning is.` });
+    };
+
+    if (has("ttft_short", "ttft_long")) {
+      const r = v.ttft_long / v.ttft_short;
+      out.push({ ok: r > 2, msg: r > 2
+        ? `TTFT grew <strong>${r.toFixed(1)}×</strong> when the prompt grew about 17×. More prompt means more prefill work before the first token.`
+        : `TTFT only grew ${r.toFixed(1)}×. Did you run with <code>--no-cache-bust</code>? A cached prompt skips most of the prefill.` });
+      comparePrediction("p-ttft", growth(r), "TTFT");
+    }
+    if (has("itl_short", "itl_long")) {
+      const r = v.itl_long / v.itl_short;
+      out.push({ ok: r < 1.3, msg: `ITL changed by only <strong>${r.toFixed(2)}×</strong>. Each decode step costs about the same however long the prompt was. The small rise is real, because each step still looks back over the whole prompt (Lesson 6).` });
+      comparePrediction("p-itl", growth(r), "ITL");
+    }
+    if (has("itl_short", "tps_short")) {
+      const implied = 1000 / v.itl_short;
+      const err = Math.abs(implied - v.tps_short) / v.tps_short;
+      out.push({ ok: err < 0.15, msg: `1000 ÷ ITL = ${implied.toFixed(1)} tok/s vs measured ${v.tps_short.toFixed(1)} tok/s: ` +
+        (err < 0.15 ? "consistent. ITL and TPS are the same fact seen two ways." : "these should agree within ~15%. Check that you copied the same row.") });
+      if (v.tps_short < 25 || v.tps_short > 110)
+        out.push({ ok: null, msg: "Your decode speed is far from the ~55 tok/s measured when this lab was tested on your Mac. Close heavy apps (browsers with many tabs, video calls) and re-run. Other GPU work slows decode." });
+    }
+    if (has("ttft_la", "itl_la", "n_la", "e2e_la")) {
+      const pred = v.ttft_la + (v.n_la - 1) * v.itl_la;
+      const err = Math.abs(pred - v.e2e_la) / v.e2e_la;
+      out.push({ ok: err < 0.1, msg: `TTFT + (N − 1) × ITL = <strong>${Math.round(pred).toLocaleString()} ms</strong> vs measured E2E ${Math.round(v.e2e_la).toLocaleString()} ms (${(err * 100).toFixed(1)}% off). ` +
+        (err < 0.1 ? "The formula holds, so you can now estimate latency for any answer length." : "More than 10% off. Re-check the numbers you entered.") });
+    }
+    if (has("e2e_la", "e2e_sa")) {
+      const r = v.e2e_la / v.e2e_sa;
+      out.push({ ok: null, msg: `E2E grew <strong>${r.toFixed(1)}×</strong> for 8× more output tokens. It's less than 8× because TTFT is paid once, whatever the answer length.` });
+      comparePrediction("p-e2e", r >= 4 ? "about 8× longer" : r >= 1.5 ? "about 2× longer" : "about the same", "end-to-end latency");
+    }
+    if (has("ttft_cold", "ttft_warm")) {
+      const extra = v.ttft_cold - v.ttft_warm;
+      out.push({ ok: v.ttft_cold > 1.5 * v.ttft_warm, msg: `The cold start added about <strong>${Math.round(extra).toLocaleString()} ms</strong> of loading weights into memory. That's why production systems keep models warm and fight cold starts (Lesson 25).` });
+    }
+    if (!out.length) out.push({ ok: null, msg: "Fill in at least one pair of related numbers (for example both TTFT values from Experiment A)." });
+    return out;
+  };
+</script>
+<script src="../assets/diagrams.js"></script>
+<script src="../assets/components.js"></script>
+</body>
+</html>

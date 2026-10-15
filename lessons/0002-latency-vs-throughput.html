@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latency vs Throughput</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body data-lesson="0002">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="../reference/syllabus.html">Syllabus</a>
+    <a href="../reference/schedule.html">Schedule</a>
+    <a href="../reference/latency-metrics.html">Latency metrics</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Lesson 2 of 30 · Part 1 · Outside in</span>
+    <h1>Latency vs throughput</h1>
+    <p class="subtitle">Load-test your own server, plot its latency–throughput curve, and see the one trade-off that shapes almost every decision in inference engineering.</p>
+    <div class="meta"><span>Week 1</span><span>~90 minutes</span><span>Lab on your Mac with Ollama</span><span>No downloads needed</span></div>
+    <div class="covers">Roadmap nodes:
+      <span class="tag"><strong>Latency vs. Throughput</strong></span><span class="tag">Latency Percentiles</span><span class="tag">End-to-End Metrics</span><span class="tag">Online vs. Offline Inference</span><span class="tag">Asynchronous Inference</span>
+    </div>
+
+    <div class="key">
+      <span class="box-label">By the end of this lesson you can</span>
+      <ul>
+        <li>tell latency from throughput, and say which one an online, offline or async workload cares about;</li>
+        <li>read p50, p95 and p99, and explain why an average hides the users who suffer;</li>
+        <li>load-test a server, plot its latency–throughput curve, and tell <em>queueing</em> from <em>batching</em> by looking at it;</li>
+        <li>check a load test with Little's law, and say what a closed-loop test can hide.</li>
+      </ul>
+    </div>
+
+    <p class="mission-link">Why this matters for your mission: "How would you load-test this, and what would you report?" is a standard inference interview question. After today you can answer it with a curve you made yourself, and explain its shape.</p>
+
+    <h2>Warm-up: Lesson 1 from memory</h2>
+    <p>Three quick questions using <em>your own</em> Lesson 1 numbers. Answer before scrolling back. Recalling it now, three days later, is what makes it stick.</p>
+    <div class="exercise-set">
+      <div class="mcq" id="w-cache">
+        <p class="prompt">Your long prompt (~1,420 tokens) had a TTFT of about 2,620 ms. With <code>--no-cache-bust</code> it fell to about 45 ms, and the server clock said prefill took only 24 ms. Why?</p>
+        <ul>
+          <li data-correct>The server reused work from the identical earlier prompt</li>
+          <li>The model produced fewer tokens on the second run</li>
+          <li>The decode steps became faster after the model warmed</li>
+          <li>The network cached the HTTP response from the server</li>
+        </ul>
+        <div class="explanation">The server kept the results of prefilling that exact prompt, so it skipped almost all of the prefill on the repeat. Ollama's <code>prompt_eval_duration</code> only counts the <em>uncached</em> prompt tokens, which is why it said 24 ms for 1,412 tokens. This is <strong>prefix caching</strong>. Lesson 6 shows what is being kept (the KV cache) and Lesson 19 shows how production systems share it between users.</div>
+      </div>
+      <div class="numeric" id="w-tps" data-answer="54.05" data-tol="0.02" data-unit="tokens/s">
+        <p class="prompt">Your short-prompt ITL was 18.5 ms. What decode speed is that?</p>
+        <div class="solution">1000 ÷ 18.5 ≈ <strong>54.1 tokens/s</strong>. You measured 54.9, which matches. ITL and decode TPS are the same fact seen two ways.</div>
+      </div>
+      <div class="numeric" id="w-e2e" data-answer="1402" data-tol="0.02" data-unit="ms">
+        <p class="prompt">Your short-prompt run: TTFT 144 ms, ITL 18.5 ms, 69 output tokens. Estimate the end-to-end latency.</p>
+        <div class="solution">TTFT + (N − 1) × ITL = 144 + 68 × 18.5 = 144 + 1,258 = <strong>1,402 ms</strong>. You measured 1,397 ms, within 0.4%. You skipped Experiment B, but your own data already shows the formula works.</div>
+      </div>
+    </div>
+
+    <h2>Two customers, two numbers</h2>
+    <p>In Lesson 1 there was one user: you. A real server has many, so there are now two kinds of numbers to watch.</p>
+    <ul>
+      <li><strong>Latency</strong> is what <em>one</em> user feels: TTFT, ITL, end-to-end time.</li>
+      <li><strong>Throughput</strong> is what the <em>server</em> delivers in total: output tokens per second across all users, or requests per second.</li>
+    </ul>
+    <p>They pull against each other. Baseten's book puts it bluntly: "One of the primary tradeoffs in inference engineering is latency versus throughput."<span class="sn-ref"></span><span class="sidenote">Baseten, <em>Inference Engineering</em>, §1.2 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/about-your-app/">"About your app"</a>.</span> Serving more users from the same hardware usually makes each of them wait a bit longer. Which side you favour depends on who is waiting.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Workload</th><th>Who waits</th><th>Optimize for</th><th>App-dev analogy</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Online</strong>: chat, code completion, voice agents</td><td>a person, right now</td><td>latency, especially the tail (p95/p99)</td><td>a synchronous API endpoint</td></tr>
+        <tr><td><strong>Offline</strong>: overnight summaries, evals, backfills</td><td>nobody, until the job finishes</td><td>throughput and cost per token</td><td>a nightly batch job</td></tr>
+        <tr><td><strong>Async</strong>: long tasks whose result is used later</td><td>a system, not a screen</td><td>throughput, but with a deadline</td><td>a background job queue with a webhook</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>The book says "most AI applications – code completion, chat, voice agents – are online applications that run in real time", while "offline jobs are better served by high-throughput model deployments".<span class="sn-ref"></span><span class="sidenote">Same section. It also notes that B2B customers "require high availability and consistently low latency", so "consistently" is about the tail, not the average.</span> <strong>Asynchronous inference</strong> sits between them. Baseten describes it as "a <em>fire and forget</em> pattern": you get a request ID back straight away, the request waits in a queue, and the result is POSTed to your webhook when it's ready. Its docs also say that "sync requests take priority", so async work fills the gaps between live traffic.<span class="sn-ref"></span><span class="sidenote">Baseten docs, <a href="https://docs.baseten.co/inference/async">"Async inference"</a>. Recommended for long-running tasks, batch processing and priority queuing.</span> If you've used BullMQ or Sidekiq, you already know this shape.</p>
+
+    <h3>End-to-end means what the user sees</h3>
+    <p>Your probe measured from the client, so its numbers include the network and any time spent queued. The book calls this "an end-to-end measurement that accounts for network latency and any queue time", and gives a rule worth memorizing: "When inference time is fast but end-to-end time is slow, turn your attention to infrastructure rather than model performance optimization."<span class="sn-ref"></span><span class="sidenote">Baseten, <em>Inference Engineering</em>, §1.4 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/measuring-latency-and-throughput/">"Measuring latency and throughput"</a>.</span> You saw a tiny version in Lesson 1: the server clock (load + prefill) was a little below the TTFT your client measured. Today the gap stops being tiny, because under load most of TTFT becomes <em>waiting</em>.</p>
+
+    <h2>Percentiles: why averages lie</h2>
+    <p>"Inference engineers measure latency in percentiles."<span class="sn-ref"></span><span class="sidenote">Book §1.4 again. Its definitions: at P50, "1 in every 2 requests is slower"; at P90, "1 in every 10"; at P99, "1 in every 100 requests is slower".</span> Sort all your measurements. The <strong>p50</strong> (median) is the middle one, <strong>p95</strong> is the value only 5% of requests exceed, and <strong>p99</strong> is the value only 1% exceed.</p>
+    <p>Google's SRE book explains why the mean isn't enough: "A simple average can obscure these tail latencies", with an example where "although a typical request is served in about 50 ms, 5% of requests are 20 times slower!"<span class="sn-ref"></span><span class="sidenote">Google, <em>Site Reliability Engineering</em>, <a href="https://sre.google/sre-book/service-level-objectives/">"Service Level Objectives"</a>: "We generally prefer to work with percentiles rather than the mean", and "a high-order percentile, such as the 99th or 99.9th, shows you a plausible worst-case value".</span> Those 5% are real people, and they're the ones who complain.</p>
+    <p>Three habits follow:</p>
+    <ul>
+      <li><strong>Count your samples.</strong> With 24 requests, "p99" is basically your slowest request. You need well over 100 requests before p99 means much. Today's tool prints a reminder.</li>
+      <li><strong>Tails multiply.</strong> If one page makes 5 independent model calls, the chance that at least one of them lands in the slowest 1% is 1 − 0.99<sup>5</sup> ≈ 4.9%. Agents that chain many calls feel the p99, not the p50.</li>
+      <li><strong>Write targets as percentiles.</strong> A service-level objective (SLO) reads like "95% of chatbot interactions should have a TTFT below 200 milliseconds". <strong>Goodput</strong> is then the number of requests per second "the LLM successfully completes while meeting your defined service-level objectives".<span class="sn-ref"></span><span class="sidenote">Both quotes from the Modular/BentoML handbook, <a href="https://handbook.modular.com/llm-inference-basics/llm-inference-metrics/">"LLM inference metrics"</a>. Goodput is the honest throughput number: requests that were too slow don't count.</span></li>
+    </ul>
+
+    <h2>When users pile up: queueing or batching</h2>
+    <p>Send a server more requests than it's working on and one of two things happens.</p>
+    <p><strong>Queueing.</strong> If the server works on one request at a time, the others wait in line. Each request still decodes at full speed once it starts, so ITL doesn't change. But TTFT now includes the wait for everyone ahead of you, and total throughput doesn't move, because the server was already as busy as it can get.</p>
+    <p><strong>Batching.</strong> If the server has several slots, it decodes several requests in the <em>same</em> step. One step now produces several tokens, one for each user, so throughput goes up. Each step costs a bit more, so every user's ITL rises. Databricks measured both effects on a GPU: "if we maximize throughput with a batch size of 64, latency increases by 4x while throughput increases by 14x."<span class="sn-ref"></span><span class="sidenote">Databricks, <a href="https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices">"LLM Inference Performance Engineering: Best Practices"</a>: "Request latency increases with batch size." Their Figure 7 is a throughput–latency curve like the one you'll draw today.</span> That deal is so good on GPUs because decode is limited by memory reads, not by arithmetic (Lesson 8). Engines like vLLM go further with <em>continuous</em> batching, which slots new requests in between decode steps (Lesson 12).</p>
+
+    <figure data-diagram="queue-vs-batch">
+      <figcaption>Four requests arrive together. One slot makes them take turns. Four slots let them share every step, so they all finish sooner, but each one streams more slowly than it would alone. The times are from a test run of today's lab on your Mac.</figcaption>
+    </figure>
+
+    <p>Ollama lets you choose. The environment variable <code>OLLAMA_NUM_PARALLEL</code> sets how many requests one loaded model works on at once. With 1 you get pure queueing; with 4 you get batching across up to four requests.<span class="sn-ref"></span><span class="sidenote">Ollama FAQ, <a href="https://docs.ollama.com/faq">"How does Ollama handle concurrent requests?"</a>: "The maximum number of parallel requests each model will process at the same time". Today's docs give the default as 1, but your version (0.6.8) defaults to "auto", which picked 2 on your Mac. That's why the lab sets it explicitly.</span></p>
+
+    <h2>Little's law: a free sanity check</h2>
+    <p>One equation links the three things a load test measures:</p>
+    <div class="formula">L = λ × W &nbsp;&nbsp;&nbsp; requests in the system = arrival rate × time each one spends there</div>
+    <p>It's Little's law, proved by John Little in 1961, and it holds no matter how requests arrive or in what order they're served.<span class="sn-ref"></span><span class="sidenote">Wikipedia, <a href="https://en.wikipedia.org/wiki/Little%27s_law">"Little's law"</a>: the relationship "is not influenced by the arrival process distribution, the service distribution, the service order, or practically anything else". It only assumes a stable system (long-run averages).</span> Two ways to use it:</p>
+    <ul>
+      <li><strong>Check your load test.</strong> With 8 users always waiting on a reply, L = 8. If the server completes 0.4 requests per second, each request <em>must</em> take about 8 ÷ 0.4 = 20 s end to end. If your tool reports something very different, the measurement is broken.</li>
+      <li><strong>Plan capacity.</strong> 0.5 requests per second arrive, and each takes 6 s. On average 3 are in flight, so you need at least 3 slots, or a queue.</li>
+    </ul>
+
+    <h2>Closed loop vs open loop</h2>
+    <p>There are two ways to generate load:</p>
+    <ul>
+      <li><strong>Closed loop</strong>: C simulated users, each sending the next request only after the last one finished. This is what <code>--concurrency</code> does. It's simple and it's what most benchmarks report.</li>
+      <li><strong>Open loop</strong>: new requests arrive at a set average <em>rate</em>, whether or not earlier ones have finished. Real users behave like this, since they don't wait for strangers' requests to complete. This is <code>--rate</code>.</li>
+    </ul>
+    <p>The trap with closed loop: when the server slows down, the simulated users slow down too, so the load backs off exactly when things get bad. Gil Tene named this <strong>coordinated omission</strong>. The tester quietly skips the requests it would have sent during the stall, so the worst moments never get measured.<span class="sn-ref"></span><span class="sidenote">Gil Tene, <a href="https://www.youtube.com/watch?v=lJ8ydIuPFeU">"How NOT to Measure Latency"</a> (talk, ~1 h). The classic on percentiles, coordinated omission and why your monitoring may be lying.</span> Closed loop is fine for drawing a curve. To find out what users will feel at a given traffic level, use open loop.</p>
+
+    <h2>Predict first</h2>
+    <p>You know the <em>direction</em> of each effect now. These predictions are about <em>size</em>, which is where intuition usually fails. Lock them in before you run anything.</p>
+    <div class="prediction" id="p-np1-ttft" data-options="under 3× higher|about 8× higher|over 50× higher">
+      <p class="prompt"><strong>One slot</strong> (<code>OLLAMA_NUM_PARALLEL=1</code>). Concurrency goes from 1 to 8 users, and each answer is 128 tokens. What happens to the <strong>median TTFT</strong>?</p>
+    </div>
+    <div class="prediction" id="p-np1-thr" data-options="rises about 8×|rises about 2×|stays about flat">
+      <p class="prompt">Same setup. What happens to total <strong>throughput</strong> (output tokens per second)?</p>
+    </div>
+    <div class="prediction" id="p-np4-thr" data-options="about 4× higher|about 1.5× higher|about the same">
+      <p class="prompt"><strong>Four slots</strong> (<code>OLLAMA_NUM_PARALLEL=4</code>). Concurrency goes from 1 to 4. What happens to <strong>throughput</strong>?</p>
+    </div>
+    <div class="prediction" id="p-np4-itl" data-options="about the same|about 2–3× higher|about 10× higher">
+      <p class="prompt">Same setup. What happens to each user's <strong>ITL</strong>?</p>
+    </div>
+
+    <h2>Lab: your server's latency–throughput curve</h2>
+    <div class="lab">
+      <span class="box-label">Lab · ~50 minutes · your Mac</span>
+      <p>The new tool is <a href="../labs/tools/load_test.py"><code>labs/tools/load_test.py</code></a>. It reuses <code>stream_probe.py</code>'s streaming code, runs many requests at once with threads, and reports percentiles at each load level. Every answer is asked to run to exactly 128 tokens, so all requests do the same amount of work. No new installs.</p>
+      <ol class="checklist" id="lab-steps">
+        <li><strong>Quit the Ollama app</strong> (click the llama icon in the menu bar, then <em>Quit Ollama</em>). The lab runs its own server with settings you choose, and two servers can't share port 11434. If you skip this, the next step fails with <code>address already in use</code>.</li>
+        <li><strong>Start a one-slot server</strong> in a new terminal tab, and leave it running:
+<pre><code>OLLAMA_NUM_PARALLEL=1 ollama serve</code></pre>
+          Look for <code>OLLAMA_NUM_PARALLEL:1</code> in the startup lines and <code>Listening on 127.0.0.1:11434</code> at the end. This tab is now your server log.</li>
+        <li><strong>Skim the tool</strong> (5 minutes). In <code>load_test.py</code>, find <code>run_closed_loop</code> (C threads that each send a request, wait for it to finish, then send the next) and <code>summarize_level</code> (where the percentiles and throughput come from). Note that throughput is total output tokens ÷ wall-clock time.</li>
+        <li><strong>Run the one-slot sweep</strong> in your first tab (about 5 minutes):
+<pre><code>cd ~/Desktop/learning
+mkdir -p portfolio/data
+python3 labs/tools/load_test.py --label np1 --csv --md --json portfolio/data/0002-np1.json</code></pre>
+          It runs 24 requests at each concurrency level: 1, 2, 4 and 8. While C=8 runs, look at the server tab. Requests still finish one at a time.</li>
+        <li><strong>Switch to four slots.</strong> In the server tab, press <kbd>Ctrl</kbd>+<kbd>C</kbd>, then:
+<pre><code>OLLAMA_NUM_PARALLEL=4 ollama serve</code></pre>
+          Run the sweep again, with a new label (about 4 minutes):
+<pre><code>python3 labs/tools/load_test.py --label np4 --csv --md --json portfolio/data/0002-np4.json</code></pre></li>
+        <li><strong>Read the server's own setting.</strong> In the server log, find the line where the model loads. It contains <code>--parallel 4</code> and <code>--ctx-size 16384</code>. Ollama gave every slot its own 4,096-token context, so 4 slots used 4× the memory for context. The Ollama FAQ says it directly: "Required RAM will scale by <code>OLLAMA_NUM_PARALLEL</code> * <code>OLLAMA_CONTEXT_LENGTH</code>." Keep that in mind for Lesson 6: <em>concurrency costs memory</em>.</li>
+        <li><strong>Plot and check.</strong> Paste <em>both</em> CSV blocks (each starts with <code>label,load,…</code>) into the box below and press <em>Plot and check</em>. The checker compares your curves with your predictions and runs Little's law on your data.</li>
+        <li><strong>Stretch (optional, ~6 minutes): open loop.</strong> Restart the server with <code>OLLAMA_NUM_PARALLEL=1</code>. Your C=1 row's req/s is the server's capacity (about 0.39 req/s). Now send random arrivals at about half of that, then at about 90%:
+<pre><code>python3 labs/tools/load_test.py --label open --rate 0.2 --requests 16 --csv
+python3 labs/tools/load_test.py --label open --rate 0.35 --requests 16 --csv</code></pre>
+          Paste those CSV lines into the box too. Compare TTFT p50 with p99 at each rate. The server is never "full" on average, yet the tail is ugly. Random arrivals bunch up, and bunches queue.</li>
+        <li><strong>Log it.</strong> In <a href="../portfolio/LOG.md"><code>portfolio/LOG.md</code></a>, paste the two markdown tables and write one sentence in your own words for each of these: what NP=1 did, what NP=4 did, and what you'd tell a product manager who asks "can we just add more users?"</li>
+        <li><strong>Clean up.</strong> <kbd>Ctrl</kbd>+<kbd>C</kbd> the server tab, then reopen the Ollama app from Applications if you want it back.</li>
+      </ol>
+    </div>
+
+    <div class="csv-plot" id="l02-plot" data-check="l02" data-charts='[
+      {"x":"throughput","y":"ttft_p95","xlabel":"throughput (output tokens/s, all users)","ylabel":"TTFT p95 (ms)","title":"Latency vs throughput"},
+      {"x":"c","y":"throughput","xlabel":"concurrent users (C)","ylabel":"throughput (tokens/s)","title":"Does more load mean more work done?"},
+      {"x":"c","y":"itl_mean","xlabel":"concurrent users (C)","ylabel":"ITL mean (ms)","title":"What each user feels between tokens"}]'></div>
+
+    <details>
+      <summary>Compare with your teacher's run (open after you've plotted your own)</summary>
+      <p>The same lab, run on your Mac while this lesson was being written (llama3.2 3B Q4_K_M, Ollama 0.6.8, 128 output tokens, 24 requests per level).</p>
+      <figure class="chart" data-csv-src="teacher-csv" data-charts='[
+        {"x":"throughput","y":"ttft_p95","xlabel":"throughput (output tokens/s, all users)","ylabel":"TTFT p95 (ms)","title":"Latency vs throughput (teacher)"},
+        {"x":"c","y":"itl_mean","xlabel":"concurrent users (C)","ylabel":"ITL mean (ms)","title":"ITL vs load (teacher)"}]'>
+        <figcaption>One slot (np1) shoots straight up: same throughput, longer and longer waits. Four slots (np4) moves right first (more throughput, ~1.5×) and then shoots up once C=8 overflows the 4 slots. On a GPU the np4 curve would stretch much further right before turning up.</figcaption>
+      </figure>
+      <script type="text/csv" id="teacher-csv">
+label,load,requests,ttft_p50,ttft_p95,ttft_p99,itl_mean,decode_tps,e2e_p50,e2e_p95,e2e_p99,throughput,rps
+np1,C=1,24,144.9,172.8,180.7,18.9,52.9,2524.1,2736.2,2853.4,50.2,0.39
+np1,C=2,24,2633.3,2877.5,2968.2,19.0,52.6,5029.2,5425.9,5577.8,50.2,0.39
+np1,C=4,24,7790.1,8416.4,8479.4,19.4,51.6,10277.1,10889.2,10895.8,49.2,0.38
+np1,C=8,24,17552.5,18615.3,18813.4,19.0,52.7,19906.8,21013.4,21210.1,50.2,0.39
+np4,C=1,24,141.6,184.6,209.4,19.0,52.6,2509.6,2848.3,2860.7,49.8,0.39
+np4,C=2,24,272.6,433.2,480.0,34.1,29.4,4559.7,4890.3,4966.0,55.9,0.44
+np4,C=4,24,526.8,646.4,646.8,51.3,19.6,7000.2,7482.7,7486.6,73.1,0.57
+np4,C=8,24,7131.2,7259.8,7260.6,49.1,20.4,13304.2,13412.8,13413.2,76.8,0.60
+      </script>
+      <p>Open loop at one slot (16 requests): at 0.2 req/s (~51% of capacity) TTFT was p50 256 ms but p99 3,180 ms. At 0.35 req/s (~90%) it was p50 1,627 ms and p99 5,396 ms. Same server, same requests, and the only change was how busy it was.</p>
+      <p class="muted">Why only 1.5× from batching here? This older llama.cpp build on Apple's GPU doesn't get the near-free batching a datacenter GPU gets, and its ITL tail spikes whenever another request's prefill cuts in (max gap at C=4 was 456 ms). Lesson 12 repeats this lab with vLLM on a free T4, so you can compare the two curves.</p>
+    </details>
+
+    <h2>Exercises</h2>
+    <p>From memory first. Then check yourself against your own data.</p>
+    <div class="exercise-set">
+      <div class="mcq" id="q-mean">
+        <p class="prompt">Your dashboard shows a mean TTFT of 300 ms, but users say the bot "sometimes hangs for seconds". What should you look at?</p>
+        <ul>
+          <li data-correct>The p99 TTFT over the same window</li>
+          <li>The mean ITL over the same window</li>
+          <li>The median TTFT over a longer window</li>
+          <li>The total throughput over the same window</li>
+        </ul>
+        <div class="explanation">"Sometimes" is a tail problem. A mean of 300 ms is compatible with 1 request in 50 taking 5 seconds. The p99 (or p95) shows the slow requests directly. The median would hide them even more than the mean does.</div>
+      </div>
+
+      <div class="mcq" id="q-np1">
+        <p class="prompt">Ollama with <code>OLLAMA_NUM_PARALLEL=1</code>: closed-loop concurrency goes from 1 to 8. Which number grows the most?</p>
+        <ul>
+          <li data-correct>Time to first token, because requests wait in line</li>
+          <li>Inter-token latency, because each decode step gets much slower</li>
+          <li>Total throughput, because the server works on more requests</li>
+          <li>Decode speed, because the model warms up under load</li>
+        </ul>
+        <div class="explanation">With one slot, extra users can only wait. The wait happens before the first token, so TTFT soaks up all of it (about 120× in the test run), while ITL and throughput stay flat.</div>
+      </div>
+
+      <div class="mcq" id="q-offline">
+        <p class="prompt">A client wants 1 million documents summarized by tomorrow morning. Nobody reads the results live. How should you serve it?</p>
+        <ul>
+          <li data-correct>Offline async jobs tuned for maximum throughput</li>
+          <li>Online sync requests tuned for minimum TTFT</li>
+          <li>Online streaming responses tuned for low ITL</li>
+          <li>Single requests in sequence for lowest latency</li>
+        </ul>
+        <div class="explanation">Nobody is waiting on any one document, so per-request latency barely matters. Big batches and a queue (async: submit, get an ID, collect results by webhook) get the most tokens per GPU-hour, which means the lowest cost. The only latency that matters is the deadline for the whole job.</div>
+      </div>
+
+      <div class="mcq" id="q-batch">
+        <p class="prompt">You raise the batch size so a GPU serves 8 users at once instead of 1. What do you usually give up?</p>
+        <ul>
+          <li data-correct>Some speed per user for more total tokens</li>
+          <li>Some total tokens for more speed per user</li>
+          <li>Some accuracy in answers for more total tokens</li>
+          <li>Nothing, because batching on GPUs is completely free</li>
+        </ul>
+        <div class="explanation">Each decode step now has 8 users' work, so it takes a bit longer, and every user's ITL rises. The step produces 8 tokens instead of 1, so total throughput rises much more. Answers don't change. Cheap isn't the same as free: Databricks saw 4× latency for 14× throughput.</div>
+      </div>
+
+      <div class="mcq" id="q-closed">
+        <p class="prompt">Why can a closed-loop load test make an overloaded server look healthier than it really is?</p>
+        <ul>
+          <li data-correct>Its clients wait for replies, so load drops when latency rises</li>
+          <li>Its clients send bigger prompts, so the server caches more work</li>
+          <li>Its clients use streaming, so the server skips the full queue</li>
+          <li>Its clients measure the mean, so percentiles are never even computed</li>
+        </ul>
+        <div class="explanation">Each simulated user waits for its reply before sending again, so a slow server automatically gets fewer requests. Real users keep arriving. That's coordinated omission, and it's why open-loop (fixed arrival rate) tests show uglier and more honest tails.</div>
+      </div>
+
+      <div class="numeric" id="n-little" data-answer="3" data-tol="0.02" data-unit="requests">
+        <p class="prompt">Requests arrive at 0.5 per second, and each one takes 6 seconds end to end. On average, how many requests are in the system at once?</p>
+        <div class="solution">Little's law: L = λ × W = 0.5 × 6 = <strong>3 requests</strong>. If your server only has 2 slots, a queue will build and TTFT will climb.</div>
+      </div>
+
+      <div class="numeric" id="n-queue" data-answer="17.5" data-tol="0.05" data-unit="s">
+        <p class="prompt">One slot. Each request takes 2.5 s from start to finish. Eight requests arrive at the same moment. Roughly how long does the eighth one wait before its first token? (Ignore its own short prefill.)</p>
+        <div class="solution">It waits for the seven ahead of it: 7 × 2.5 = <strong>17.5 s</strong>. The test run's TTFT p50 at C=8 was 17.6 s. When requests queue, TTFT ≈ (requests ahead) × (time per request), which is why it explodes while ITL stays flat.</div>
+      </div>
+
+      <div class="numeric" id="n-fanout" data-answer="4.9" data-tol="0.03" data-unit="%">
+        <p class="prompt">An agent makes 5 independent model calls per user action. What's the chance that at least one of them is slower than the p99?</p>
+        <div class="solution">1 − 0.99<sup>5</sup> = 1 − 0.951 = <strong>≈ 4.9%</strong>. So about 1 action in 20 hits a "1 in 100" delay. With 20 calls it's 18%. The more calls a feature chains, the more your p99 becomes everyone's experience.</div>
+      </div>
+
+      <div class="numeric" id="n-batch" data-answer="10.9" data-tol="0.03" data-unit="tokens/s per user">
+        <p class="prompt">Alone, a request decodes at 50 tokens/s. At batch size 64 the GPU's total throughput is 14× higher. Spread evenly, what decode speed does each of the 64 users get?</p>
+        <div class="solution">Total = 50 × 14 = 700 tokens/s. Per user: 700 ÷ 64 ≈ <strong>10.9 tokens/s</strong>, a bit under 5× slower per user, in line with the "latency increases by 4x" Databricks reports. Whether that's acceptable depends on the workload: fine for an offline job, too slow for a chat UI.</div>
+      </div>
+
+      <div class="explain" id="e-why">
+        <p class="prompt">In two to four sentences, using your own lab numbers: why did one slot keep throughput flat while TTFT exploded? And why did four slots raise throughput but slow each user down?</p>
+        <div class="model-answer"><strong>Model answer.</strong> With one slot the server was already fully busy at C=1, so extra users couldn't add work, only waiting. The wait comes before the first token, so TTFT grew with the queue (~145 ms → ~17.5 s) while ITL and throughput (~50 tok/s) didn't move. With four slots, each decode step serves up to four users at once. That produces more tokens per step (throughput ~50 → ~73 tok/s), but each step takes longer, so every user's ITL rose (~19 → ~51 ms). Past four users, the extra requests queue again.</div>
+      </div>
+    </div>
+
+    <div class="scoreboard"></div>
+
+    <h2>Make it stick</h2>
+    <p>On <strong>day 3</strong>, open <a href="0001-first-served-model.html">Lesson 1</a>, press <em>Reset exercises</em> and redo its exercises, then do the same here. Mixing the two lessons is deliberate: telling "this is a prefill problem" from "this is a queueing problem" is the skill. On <strong>day 7</strong>, redo just this lesson's exercises. The <a href="../reference/latency-metrics.html#under-load">latency metrics reference</a> now has a section on load, with today's formulas.</p>
+
+    <div class="source">
+      <span class="box-label">Primary source · read after the lab (~25 min)</span>
+      <p>Baseten, <em>Inference Engineering</em>, <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/measuring-latency-and-throughput/"><strong>§1.4 "Measuring latency and throughput"</strong></a> and <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/about-your-app/"><strong>§1.2 "About your app"</strong></a>. These are the two sections the roadmap's nodes for this lesson come from. While reading §1.4, find the sentence that says TPS can be two different kinds of metric, and decide which kind each column of your load-test table is.</p>
+      <p>If you have an hour for a talk: Gil Tene, <a href="https://www.youtube.com/watch?v=lJ8ydIuPFeU">"How NOT to Measure Latency"</a>. It isn't about LLMs, but every load-testing mistake it describes applies to them.</p>
+    </div>
+
+    <div class="source">
+      <span class="box-label">Talk to practitioners</span>
+      <p>Post your two curves to <a href="https://www.reddit.com/r/LocalLLaMA/">r/LocalLLaMA</a> and ask how <code>OLLAMA_NUM_PARALLEL</code> behaves on other Apple chips, or on a newer Ollama. People there benchmark constantly, and a real answer to "why is batching only 1.5× on Metal?" is worth more than another blog post. If you'd rather lurk, search the sub for "concurrent requests ollama" first.</p>
+    </div>
+
+    <div class="ask">
+      <span class="box-label">Ask your teacher</span>
+      <p>Ask anything that's unclear, for example "Why does batching make each decode step slower at all?" or "How would I set an SLO for a voice agent?" When you finish, paste your two CSV blocks and your one-sentence takeaways (from Lesson 1 too) in the terminal. Lesson 3 gets written from that.</p>
+    </div>
+
+    <div class="pager">
+      <a href="0001-first-served-model.html">← Lesson 1, your first served model</a>
+      <span class="disabled">Next: Lesson 3, choosing a model (generated when you're ready) →</span>
+    </div>
+  </article>
+</div>
+
+<script>
+  /* Lesson-specific checker for the CSV plot box (feedback loop for the lab). */
+  window.LabChecks = window.LabChecks || {};
+  LabChecks.l02 = function (rows, groups) {
+    const out = [];
+    const predicted = (id) => IECourse.store.get(IECourse.key(id), null);
+    const compare = (id, actual, label) => {
+      const p = predicted(id);
+      if (!p) return;
+      out.push(p === actual
+        ? { ok: true, msg: `Your prediction for ${label} (“${p}”) matches your data.` }
+        : { ok: false, msg: `You predicted ${label} would be “${p}”; your data says “${actual}”. Take two minutes on why before moving on.` });
+    };
+    const ms = (v) => Math.round(v).toLocaleString() + " ms";
+    let sawNp1 = false, sawNp4 = false;
+
+    groups.forEach((all, name) => {
+      const sweep = all.filter((r) => Number.isFinite(r.c)).sort((a, b) => a.c - b.c);
+      if (sweep.length < 2) return;
+      const lo = sweep[0], hi = sweep[sweep.length - 1];
+      const gain = hi.throughput / lo.throughput;
+      const ttftR = hi.ttft_p50 / lo.ttft_p50;
+      const itlR = hi.itl_mean / lo.itl_mean;
+      const isNp1 = /np\s*1\b/i.test(name) || (!/np\s*\d/i.test(name) && gain < 1.15);
+      if (gain < 1.15) {
+        out.push({ ok: true, msg: `<strong>${name}</strong> is <strong>queueing</strong>: from C=${lo.c} to C=${hi.c}, throughput changed only ${gain.toFixed(2)}× while TTFT p50 grew <strong>${ttftR.toFixed(0)}×</strong> (${ms(lo.ttft_p50)} → ${ms(hi.ttft_p50)}) and ITL ${itlR.toFixed(2)}×. Extra users can only wait.` });
+      } else {
+        out.push({ ok: true, msg: `<strong>${name}</strong> is <strong>batching</strong>: from C=${lo.c} to C=${hi.c}, throughput rose ${gain.toFixed(2)}× (${lo.throughput.toFixed(1)} → ${hi.throughput.toFixed(1)} tok/s), and each user paid with ITL ${itlR.toFixed(2)}× (${lo.itl_mean.toFixed(1)} → ${hi.itl_mean.toFixed(1)} ms).` });
+      }
+      if (isNp1 && !sawNp1) {
+        sawNp1 = true;
+        compare("p-np1-ttft", ttftR < 3 ? "under 3× higher" : ttftR < 30 ? "about 8× higher" : "over 50× higher", "one-slot TTFT");
+        compare("p-np1-thr", gain > 4 ? "rises about 8×" : gain > 1.3 ? "rises about 2×" : "stays about flat", "one-slot throughput");
+      }
+      if (!isNp1 && !sawNp4) {
+        const c4 = sweep.filter((r) => r.c <= 4).pop();
+        if (c4 && c4 !== lo) {
+          sawNp4 = true;
+          const g4 = c4.throughput / lo.throughput, i4 = c4.itl_mean / lo.itl_mean;
+          compare("p-np4-thr", g4 >= 2.5 ? "about 4× higher" : g4 >= 1.2 ? "about 1.5× higher" : "about the same", "four-slot throughput at C=4");
+          compare("p-np4-itl", i4 < 1.3 ? "about the same" : i4 < 5 ? "about 2–3× higher" : "about 10× higher", "four-slot ITL at C=4");
+          const c8 = sweep.find((r) => r.c > 4);
+          if (c8) out.push({ ok: null, msg: `Past the 4 slots (C=${c8.c}), TTFT p50 jumped to ${ms(c8.ttft_p50)}: the extra requests queue, exactly like the one-slot run.` });
+        }
+      }
+      if (Number.isFinite(hi.rps) && hi.rps > 0 && Number.isFinite(hi.e2e_p50)) {
+        const w = hi.c / hi.rps, real = hi.e2e_p50 / 1000, err = Math.abs(w - real) / real;
+        out.push({ ok: err < 0.2, msg: `Little's law on ${name} C=${hi.c}: W = L ÷ λ = ${hi.c} ÷ ${hi.rps} req/s = <strong>${w.toFixed(1)} s</strong> vs measured E2E p50 ${real.toFixed(1)} s (${(err * 100).toFixed(0)}% off). ` +
+          (err < 0.2 ? "Consistent, so you can trust this measurement." : "More than 20% apart. Was the machine busy with something else? The req/s column is rounded, so small levels can drift.") });
+      }
+      if (lo.c === 1 && (lo.throughput < 25 || lo.throughput > 110))
+        out.push({ ok: null, msg: `${name} at C=1 gave ${lo.throughput} tok/s, far from the ~50 seen in testing. Close heavy apps and re-run.` });
+    });
+
+    const open = rows.filter((r) => Number.isFinite(r.rate)).sort((a, b) => a.rate - b.rate);
+    if (open.length) {
+      const one = groups.get([...groups.keys()].find((k) => /np\s*1\b/i.test(k)) || "");
+      const cap = one && one.find((r) => r.c === 1) ? one.find((r) => r.c === 1).rps : 0.39;
+      open.forEach((r) => out.push({ ok: null, msg: `Open loop at ${r.rate}/s (~${Math.round((100 * r.rate) / cap)}% of capacity): TTFT p50 ${ms(r.ttft_p50)}, p99 ${ms(r.ttft_p99)}, so the tail is <strong>${(r.ttft_p99 / r.ttft_p50).toFixed(1)}×</strong> the median. Random arrivals bunch up, and bunches queue.` }));
+    }
+    if (!sawNp1 && !sawNp4 && !open.length) out.push({ ok: null, msg: "Paste at least one full sweep (C=1 through C=8) so the checker can compare load levels." });
+    else if (!(sawNp1 && sawNp4)) out.push({ ok: null, msg: `Only one sweep found. Paste both the <code>np1</code> and <code>np4</code> CSV blocks to compare queueing with batching.` });
+    return out;
+  };
+</script>
+<script src="../assets/diagrams.js"></script>
+<script src="../assets/components.js"></script>
+<script src="../assets/charts.js"></script>
+</body>
+</html>

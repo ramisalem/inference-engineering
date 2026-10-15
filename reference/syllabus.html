@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Course Syllabus</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  .anatomy { counter-reset: a; list-style: none; padding: 0; display: grid; gap: .5rem; }
+  .anatomy li { counter-increment: a; position: relative; padding-left: 2.2rem; margin: 0; }
+  .anatomy li::before { content: counter(a); position: absolute; left: 0; top: .1rem; width: 1.5rem; height: 1.5rem; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--paper); font-family: var(--sans); font-size: .72rem; font-weight: 600; }
+  tr.is-done td:first-child { color: var(--ok); }
+</style>
+</head>
+<body data-root="../">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="syllabus.html">Syllabus</a>
+    <a href="schedule.html">Schedule</a>
+    <a href="../lessons/0001-first-served-model.html">Lesson 1</a>
+    <a href="latency-metrics.html">Latency metrics</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Reference · Syllabus</span>
+    <h1>Syllabus</h1>
+    <p class="subtitle">30 lessons in 8 parts, mapped node by node to <a href="https://roadmap.sh/inference-engineering">roadmap.sh/inference-engineering</a>. Built for an app developer becoming an inference engineer in 13 weeks at about 5 hours a week.</p>
+
+    <div class="key">
+      <span class="box-label">The mission</span>
+      <p>Become hireable as an inference engineer. By the end you can do the napkin math (TTFT, ITL, KV cache, $/1M tokens), serve and load-test models with vLLM and llama.cpp, apply and measure the core optimizations, and show a public capstone repo. The full mission is in <code>MISSION.md</code>.</p>
+    </div>
+
+    <h2>How every lesson works</h2>
+    <ol class="anatomy">
+      <li><strong>Concept, briefly.</strong> Only the knowledge the lab needs, with sources in the margin.</li>
+      <li><strong>Predict.</strong> You write down what you expect <em>before</em> running anything, because a wrong prediction teaches more than a right one.</li>
+      <li><strong>Lab.</strong> Hands-on on your Mac or a free cloud GPU, with step-by-step checklists and a results checker.</li>
+      <li><strong>Exercises.</strong> Quizzes and napkin-math problems with instant feedback, plus one "explain it" answer you write from memory.</li>
+      <li><strong>Recall.</strong> From Lesson 2 on, a few questions from earlier lessons, because spacing is what makes knowledge stick.</li>
+      <li><strong>Portfolio.</strong> Every lab adds a result to <code>portfolio/LOG.md</code>, the raw material for your capstone and interviews.</li>
+    </ol>
+    <p>Lessons are generated <strong>one at a time</strong>. Finish one, tell your teacher how it went, and the next one is written for where you actually are.</p>
+
+    <h2>Why the order differs from the roadmap</h2>
+    <ul>
+      <li><strong>Outside in.</strong> You start by measuring a model the way its users experience it (HTTP, streaming, load). That's familiar territory for an app developer. Then you go inside the model.</li>
+      <li><strong>Prerequisites just in time.</strong> Neural networks and transformers come right before the KV cache and the roofline, which need them.</li>
+      <li><strong>Grouped by skill.</strong> MoE sits next to expert parallelism, continuous batching is taught with vLLM, cold starts with containers, cost estimation with capacity planning, and image/video models with generation inference.</li>
+      <li><strong>Depth follows the mission.</strong> <span class="pill core">core</span> lessons are interview-critical and get full labs. <span class="pill light">light</span> lessons give awareness with a short lab.</li>
+    </ul>
+    <p class="muted" style="font-family:var(--sans);font-size:.8rem">Lab platforms: <span class="pill mac">Mac</span> your M1 Pro · <span class="pill gpu">Colab T4</span> free NVIDIA GPU in the browser · <span class="pill gpu">Kaggle 2×T4</span> free, two GPUs · <span class="pill">Calculator / sim</span> runs anywhere.</p>
+
+    <div id="syllabus-parts"></div>
+
+    <h2 id="coverage-h">Roadmap coverage</h2>
+    <p>Every node on the roadmap and the lesson that teaches it: <strong id="coverage-count"></strong>.</p>
+    <div id="coverage"></div>
+
+    <div class="pager">
+      <span class="disabled">&nbsp;</span>
+      <a href="schedule.html">13-week schedule →</a>
+    </div>
+  </article>
+</div>
+<script src="../assets/course-data.js"></script>
+<script src="../assets/course-pages.js"></script>
+<script src="../assets/components.js"></script>
+</body>
+</html>

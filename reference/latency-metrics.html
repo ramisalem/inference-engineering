@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latency Metrics</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  .arrow-up { color: var(--bad); font-weight: 600; } .arrow-down { color: var(--ok); font-weight: 600; } .flat { color: var(--muted); }
+</style>
+</head>
+<body data-root="../">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="syllabus.html">Syllabus</a>
+    <a href="schedule.html">Schedule</a>
+    <a href="../lessons/0001-first-served-model.html">Lesson 1</a>
+    <a href="../lessons/0002-latency-vs-throughput.html">Lesson 2</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Reference · from Lessons 1–2</span>
+    <h1>Latency metrics</h1>
+    <p class="subtitle">The numbers that describe how fast a model feels, on one page.</p>
+
+    <figure data-diagram="stream-timeline">
+      <figcaption>Every streamed answer has this shape: a wait (TTFT), then a rhythm (ITL).</figcaption>
+    </figure>
+
+    <h2>Definitions</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>Definition</th><th>Formula</th><th>Mostly driven by</th></tr></thead>
+      <tbody>
+        <tr><td><strong>TTFT</strong><br><span class="muted">time to first token · ms</span></td><td>Request sent → first non-empty token received</td><td>measured directly</td><td>queueing + prefill + network</td></tr>
+        <tr><td><strong>ITL</strong><br><span class="muted">inter-token latency · ms</span></td><td>Average gap between consecutive tokens, first token excluded</td><td><code>(E2E − TTFT) / (N − 1)</code></td><td>one decode step</td></tr>
+        <tr><td><strong>Decode TPS</strong><br><span class="muted">per user · tok/s</span></td><td>Speed of the stream after the first token</td><td><code>1000 / ITL<sub>ms</sub></code></td><td>decode speed</td></tr>
+        <tr><td><strong>E2E</strong><br><span class="muted">end-to-end latency · ms</span></td><td>Request sent → last token received</td><td><code>TTFT + (N − 1) × ITL</code></td><td>everything, including client and network</td></tr>
+        <tr><td><strong>Throughput</strong><br><span class="muted">system TPS · tok/s</span></td><td>Output tokens per second across <em>all</em> concurrent requests</td><td><code>total output tokens / wall time</code></td><td>batching, concurrency (see <a href="#under-load">Under load</a>)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted" style="font-size:.85rem"><strong>Naming in this course:</strong> say <em>ITL</em>, not TPOT ("time per output token", same idea). Say <em>decode TPS</em> for the per-user stream speed and <em>throughput</em> for the system total. NVIDIA's "TPS per user" is N ÷ E2E, which <em>includes</em> TTFT, so always state your definition.<span class="sn-ref"></span><span class="sidenote">Definitions and the caveat "tool implementations vary, so compare results only when definitions align": NVIDIA, <a href="https://docs.nvidia.com/nim/benchmarking/llm/metrics">"Metrics"</a>.</span></p>
+
+    <h2>Formulas you'll use constantly</h2>
+    <div class="formula">TPS = 1000 ÷ ITL(ms) &nbsp;&nbsp;·&nbsp;&nbsp; ITL(ms) = 1000 ÷ TPS</div>
+    <div class="formula">E2E ≈ TTFT + (N − 1) × ITL</div>
+    <div class="formula">largest affordable ITL = (deadline − TTFT) ÷ (N − 1)</div>
+    <div class="formula">per-user TPS ≈ throughput ÷ concurrent users &nbsp;&nbsp;<span class="muted">(if shared evenly)</span></div>
+
+    <h2>What moves what</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>You change…</th><th>TTFT</th><th>ITL</th><th>E2E</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Longer prompt</td><td class="arrow-up">↑↑</td><td class="flat">≈ (slight ↑)</td><td class="arrow-up">↑</td><td>more prefill before the first token</td></tr>
+        <tr><td>Longer answer</td><td class="flat">=</td><td class="flat">=</td><td class="arrow-up">↑ linear</td><td>more decode steps, same cost each</td></tr>
+        <tr><td>Cold model</td><td class="arrow-up">↑↑↑</td><td class="flat">=</td><td class="arrow-up">↑</td><td>weights must load into memory first</td></tr>
+        <tr><td>Repeated prompt prefix</td><td class="arrow-down">↓↓</td><td class="flat">=</td><td class="arrow-down">↓</td><td>the server reuses cached prefill work (Lesson 19)</td></tr>
+        <tr><td>More users, one slot (queueing)</td><td class="arrow-up">↑↑↑</td><td class="flat">=</td><td class="arrow-up">↑↑</td><td>requests wait in line; throughput flat</td></tr>
+        <tr><td>More users, more slots (batching)</td><td class="arrow-up">↑</td><td class="arrow-up">↑</td><td class="arrow-up">↑</td><td>each step serves several users; throughput ↑</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2>Measuring honestly</h2>
+    <ul>
+      <li><strong>Warm up first</strong>, unless cold start is what you're measuring. The first request may include loading the model.</li>
+      <li><strong>Bust the prefix cache</strong> when measuring prefill (<code>stream_probe.py</code> does this by default), or measure cache hits on purpose.</li>
+      <li><strong>Count tokens with the server's usage numbers</strong>, not stream chunks. A chunk isn't always exactly one token.</li>
+      <li><strong>Client clock vs server clock:</strong> the gap between them is network and client overhead.</li>
+      <li><strong>Report percentiles, not just means:</strong> p50, p95 and p99, with enough samples (over 100 for a real p99).</li>
+      <li><strong>Write down how you measured:</strong> model, quantization, hardware, prompt and output lengths, concurrency, tool.</li>
+    </ul>
+
+    <h2 id="under-load">Under load</h2>
+    <p>Latency is what <em>one</em> user feels; throughput is what the <em>server</em> delivers in total. Serving more users from the same hardware usually raises the first and lowers the second's cost per token.</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><strong>p50 / p95 / p99</strong></td><td>the value that 50% / 5% / 1% of requests exceed. Means hide the tail; with N requests, p99 needs N well over 100.</td></tr>
+        <tr><td><strong>SLO</strong></td><td>a target written as a percentile, e.g. "95% of requests have TTFT below 200 ms"</td></tr>
+        <tr><td><strong>Goodput</strong></td><td>requests per second completed <em>while meeting</em> the SLO</td></tr>
+        <tr><td><strong>Queueing</strong></td><td>one slot: extra requests wait. TTFT ↑↑, ITL =, throughput flat</td></tr>
+        <tr><td><strong>Batching</strong></td><td>several slots decode in the same step. Throughput ↑, every user's ITL ↑</td></tr>
+        <tr><td><strong>Closed loop</strong></td><td>C users, each waits for its reply before sending again (<code>--concurrency</code>). Load backs off when the server slows: coordinated omission.</td></tr>
+        <tr><td><strong>Open loop</strong></td><td>requests arrive at a set rate regardless (<code>--rate</code>). Like real users; shows honest tails.</td></tr>
+        <tr><td><strong>Online / offline / async</strong></td><td>a person waits now (latency) / nobody waits (throughput, cost) / a queue + webhook with a deadline</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="formula">Little's law: L = λ × W &nbsp;&nbsp;<span class="muted">(in system = arrival rate × time in system)</span></div>
+    <div class="formula">queued TTFT ≈ (requests ahead) × (time per request) + own prefill</div>
+    <div class="formula">P(at least one of n calls is slower than p99) = 1 − 0.99<sup>n</sup></div>
+    <figure data-diagram="queue-vs-batch">
+      <figcaption>One slot makes requests take turns; four slots let them share each step.</figcaption>
+    </figure>
+    <p>Teacher's Lab 2 run on your Mac (llama3.2 3B, Ollama 0.6.8, 128 output tokens, 24 requests per level, closed loop):</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Slots</th><th>Load</th><th class="num">TTFT p50</th><th class="num">TTFT p99</th><th class="num">ITL</th><th class="num">E2E p50</th><th class="num">Throughput</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>C=1</td><td class="num">145 ms</td><td class="num">181 ms</td><td class="num">18.9 ms</td><td class="num">2.5 s</td><td class="num">50 tok/s</td></tr>
+        <tr><td>1</td><td>C=8</td><td class="num">17,553 ms</td><td class="num">18,813 ms</td><td class="num">19.0 ms</td><td class="num">19.9 s</td><td class="num">50 tok/s</td></tr>
+        <tr><td>4</td><td>C=4</td><td class="num">527 ms</td><td class="num">647 ms</td><td class="num">51.3 ms</td><td class="num">7.0 s</td><td class="num">73 tok/s</td></tr>
+        <tr><td>4</td><td>C=8</td><td class="num">7,131 ms</td><td class="num">7,261 ms</td><td class="num">49.1 ms</td><td class="num">13.3 s</td><td class="num">77 tok/s</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted" style="font-size:.85rem">On a datacenter GPU, batching is far cheaper: Databricks saw batch 64 give 14× throughput for 4× latency. Run it yourself: <code>python3 labs/tools/load_test.py --label np1 --csv</code>.</p>
+
+    <h2>Your baseline</h2>
+    <p>Your own Lab 1 numbers (M1 Pro, <code>llama3.2</code> 3B Q4_K_M via Ollama 0.6.8, 15 Oct 2026, from <code>portfolio/LOG.md</code>).</p>
+    <table>
+      <thead><tr><th>Condition</th><th class="num">TTFT</th><th class="num">ITL</th><th class="num">Decode TPS</th></tr></thead>
+      <tbody>
+        <tr><td>~80-token prompt, warm</td><td class="num">≈ 145 ms</td><td class="num">≈ 18.5 ms</td><td class="num">≈ 55 tok/s</td></tr>
+        <tr><td>~1,420-token prompt, warm</td><td class="num">≈ 2,620 ms</td><td class="num">≈ 22.9 ms</td><td class="num">≈ 44 tok/s</td></tr>
+        <tr><td>Same long prompt, repeated (cached)</td><td class="num">≈ 36–49 ms</td><td class="num"></td><td class="num"></td></tr>
+        <tr><td>Cold start (load 2,019 ms + prefill 531 ms)</td><td class="num">≈ 2,570 ms</td><td class="num"></td><td class="num"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Sources</h2>
+    <ul>
+      <li>NVIDIA, <a href="https://docs.nvidia.com/nim/benchmarking/llm/metrics">"Metrics"</a>, NIM LLM Benchmarking Guide: precise definitions used by benchmark tools such as AIPerf.</li>
+      <li>Databricks, <a href="https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices">"LLM Inference Performance Engineering: Best Practices"</a>: TTFT and TPOT in practice.</li>
+      <li>Baseten, <em>Inference Engineering</em> §1.4 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/measuring-latency-and-throughput/">"Measuring latency and throughput"</a>: percentiles, end-to-end metrics, TPS as latency or throughput.</li>
+      <li>Google SRE book, <a href="https://sre.google/sre-book/service-level-objectives/">"Service Level Objectives"</a>: why percentiles beat the mean.</li>
+      <li>Modular handbook, <a href="https://handbook.modular.com/llm-inference-basics/llm-inference-metrics/">"LLM inference metrics"</a>: SLOs and goodput.</li>
+      <li>Ollama, <a href="https://docs.ollama.com/api/usage">"Usage"</a>: the server-side timing fields <code>stream_probe.py --server-timings</code> reads.</li>
+    </ul>
+  </article>
+</div>
+<script src="../assets/diagrams.js"></script>
+<script src="../assets/components.js"></script>
+</body>
+</html>
