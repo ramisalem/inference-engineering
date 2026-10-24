@@ -187,12 +187,20 @@ Summary
 
 ---
 
-## 0002: Latency vs throughput (date: ____)
+## 0002: Latency vs throughput (date: 2026-10-17)
 
 **Setup:** `llama3.2` (3B Q4_K_M) on Ollama 0.6.8, `labs/tools/load_test.py`, 128 output tokens, 24 requests per level, closed loop C = 1, 2, 4, 8. Raw data: `portfolio/data/0002-np1.json`, `0002-np4.json`.
 
 One slot (`OLLAMA_NUM_PARALLEL=1`), paste the `--md` table:
 
+| Load | TTFT p50 | TTFT p95 | ITL mean | E2E p50 | Throughput | Req/s |
+|---|---|---|---|---|---|---|
+| C=1 | 4,594 ms | 6,902 ms | 144.4 ms | 21.9 s | 5.5 tok/s | 0.043 |
+| C=2 | 30,268 ms | 53,391 ms | 178.7 ms | 49.0 s | 4.5 tok/s | 0.035 |
+| C=4 | 56,262 ms | 61,907 ms | 105.3 ms | 70.2 s | 7.3 tok/s | 0.057 |
+| C=8 | 122,432 ms | 127,940 ms | 101.6 ms | 136.7 s | 7.5 tok/s | 0.058 |
+
+Run on 17 Oct 2026 (Ollama 0.6.8). The Mac was busy during this run: ITL at C=1 was 144 ms vs ~18.5 ms normally, so every number is ~7× slower than a clean run.
 
 Four slots (`OLLAMA_NUM_PARALLEL=4`), paste the `--md` table:
 
