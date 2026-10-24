@@ -214,6 +214,15 @@ figcaption { font-size: .8rem; color: var(--muted); font-style: italic; margin-t
 .checklist > li.done > *:not(input):not(pre) { opacity: .6; }
 .checklist pre { margin-top: .5rem; }
 
+/* jot: one-sentence write-up inside a lab step (components.js initJot) */
+.jot { margin: .6rem 0 .2rem; }
+.jot > .prompt { font-family: var(--sans); font-size: .8rem; font-weight: 600; color: var(--lab-rule); margin-bottom: .3rem; }
+.jot textarea { width: 100%; font: inherit; font-size: .92rem; line-height: 1.45; padding: .45rem .6rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); resize: vertical; }
+.jot.needed textarea { border-color: var(--bad); background: var(--bad-bg); }
+.jot.needed > .prompt::after { content: " ← write this first, then tick the step"; color: var(--bad); font-weight: 500; }
+.jot-collect { margin: .8rem 0 0; }
+.jot-collect pre { margin-top: .6rem; }
+
 /* lab results checker */
 .lab-results { background: var(--card); border: 1px solid var(--rule); border-radius: 12px; padding: 1rem 1.2rem; margin: 1.2rem 0; }
 .lab-results .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .7rem 1.2rem; margin-bottom: .6rem; }

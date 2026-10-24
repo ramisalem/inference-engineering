@@ -7,3 +7,4 @@ Your teacher reads these files before writing your next lesson, so put questions
 
 - [Lesson 1: Your first served model](0001-first-served-model.md)
 - [Lesson 2: Latency vs throughput](0002-latency-vs-throughput.md)
+- [Lesson 3: Choosing a model](0003-choosing-a-model.md)

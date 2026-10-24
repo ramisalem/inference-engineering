@@ -207,3 +207,33 @@ Open loop (optional), rate and TTFT p50/p99:
 **What I'd tell a PM who asks "can we just add more users?":**
 
 **Open question I still have:**
+
+---
+
+## 0003: Choosing a model (date: ____)
+
+**Setup:** Ollama 0.40.10, `labs/tools/mini_eval.py`, 12 tasks from `labs/0003-mini-eval/tasks.json` (classify, extract, math, write; two in Arabic), temperature 0, seed 42. Setups: `llama3.2` (3B), `qwen3:1.7b+nothink`, `qwen3:1.7b` (thinking). Raw data: `portfolio/data/0003-eval.jsonl`.
+
+Eval table, paste the `--markdown` output:
+
+
+Lab write-ups, paste from the lesson's **Copy my write-ups as Markdown** button:
+
+
+### Model-selection memo (one page)
+
+**Use case and constraints** (the job, latency target, volume, budget, data rules):
+
+**Candidates** (and why these):
+
+**Eval** (tasks, kinds, checks, settings):
+
+**Results** (the numbers that decided it):
+
+**Recommendation:**
+
+**Why not the others:**
+
+**Risks, and what would change my mind:**
+
+**Next step:**

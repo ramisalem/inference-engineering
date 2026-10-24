@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choosing a Model</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body data-lesson="0003">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="../reference/syllabus.html">Syllabus</a>
+    <a href="../reference/schedule.html">Schedule</a>
+    <a href="../reference/latency-metrics.html">Latency metrics</a>
+    <a href="../reference/model-selection.html">Model selection</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Lesson 3 of 30 · Part 1 · Outside in</span>
+    <h1>Choosing a model</h1>
+    <p class="subtitle">Open or closed, shared or dedicated, thinking or not. Run a small eval of real models on your Mac, and turn the numbers into a one-page recommendation.</p>
+    <div class="meta"><span>Week 1 (catch-up)</span><span>~60 minutes</span><span>Lab on your Mac with Ollama</span><span>No downloads needed</span></div>
+    <div class="covers">Roadmap nodes:
+      <span class="tag"><strong>Model Selection</strong></span><span class="tag"><strong>Model Evaluation</strong></span><span class="tag">Open vs Closed Models</span><span class="tag">Shared vs. Dedicated Inference</span><span class="tag">Reasoning Models</span><span class="tag">Consumer vs B2B</span><span class="tag">AI-Native Applications</span><span class="tag">Fine-Tuning</span><span class="tag">Distillation</span>
+    </div>
+
+    <div class="key">
+      <span class="box-label">By the end of this lesson you can</span>
+      <ul>
+        <li>say what changes when a model is open or closed, and when you run it on shared or dedicated hardware;</li>
+        <li>explain what a reasoning model buys you and what it costs, in tokens, seconds and dollars;</li>
+        <li>build a small eval from your own app's tasks, run it on three setups, and read the failures;</li>
+        <li>work out cost per 1,000 requests and a shared-vs-dedicated break-even with napkin math;</li>
+        <li>write a one-page model-selection memo backed by your own measurements.</li>
+      </ul>
+    </div>
+
+    <p class="mission-link">Why this matters for your mission: "Which model would you use for this, and how would you know?" comes up in almost every inference interview. Today's memo, with its own eval behind it, is your answer, and the second item in your portfolio.</p>
+
+    <h2>Warm-up: Lesson 2 from memory</h2>
+    <p>These use <em>your own</em> Lab 2 run (<code>portfolio/data/0002-np1.json</code>). Answer before you look anything up.</p>
+    <div class="exercise-set">
+      <div class="mcq" id="w-busy">
+        <p class="prompt">In your Lab 2 run at C=1 (one user, one slot), ITL was 144 ms. In Lesson 1 the same model, alone, gave 18.5 ms. What's the most likely cause?</p>
+        <ul>
+          <li data-correct>Another app was competing for the Mac's memory and GPU</li>
+          <li>One slot made every token wait for the other users</li>
+          <li>The 128-token answers made each later decode step much slower</li>
+          <li>The prompt was far longer than in Lesson 1 runs</li>
+        </ul>
+        <div class="explanation">At C=1 nobody else is in line, so queueing can't slow the tokens down. The prompt was only ~71 tokens, and in Lesson 1 even a 1,412-token prompt only raised ITL to 22.8 ms. A decode that's 7.8× slower with no other users means the machine itself was busy. On a 16 GB Mac that usually means memory pressure (swapping) or another app using the GPU. I ran a single stream this morning and got 18.3 ms, so the Mac is fine now. Your curve still has the right <em>shape</em>: TTFT p50 grew 27× from C=1 to C=8 while throughput stayed in the same 4.5–7.5 tok/s band. That's queueing.</div>
+      </div>
+      <div class="numeric" id="w-little" data-answer="136.5" data-tol="0.03" data-unit="s">
+        <p class="prompt">Same run, C=8: the server completed 0.0586 requests per second. Using Little's law, what end-to-end time per request should you expect?</p>
+        <div class="solution">W = L ÷ λ = 8 ÷ 0.0586 ≈ <strong>136.5 s</strong>. Your measured E2E p50 was 136.7 s. So the measurement is consistent: slow, but not broken. That's the useful habit. When Little's law agrees, trust the tool and suspect the machine.</div>
+      </div>
+      <div class="mcq" id="w-batch">
+        <p class="prompt">You re-run Lab 2 on a quiet Mac with <code>OLLAMA_NUM_PARALLEL=4</code>. Compared with one slot, what do you expect at C=4?</p>
+        <ul>
+          <li data-correct>More total tokens per second, but slower tokens per user</li>
+          <li>Fewer total tokens per second, but faster tokens per user</li>
+          <li>The same total tokens per second, and much shorter answers</li>
+          <li>More total tokens per second, and faster tokens per user</li>
+        </ul>
+        <div class="explanation">Batching: each decode step serves several users, so the server makes more tokens per second, but each step takes longer, so each user's stream slows down. In the teacher's run throughput went from ~50 to ~73 tok/s, and ITL from ~19 to ~51 ms.</div>
+      </div>
+    </div>
+    <details>
+      <summary>Optional catch-up (~12 min): finish Lab 2 on a quiet Mac</summary>
+      <p>Your <code>np4</code> sweep is missing, and the <code>np1</code> one ran on a busy machine. If you want a clean pair of curves for your portfolio, quit heavy apps (browsers with many tabs, Docker, Xcode) and re-run <a href="0002-latency-vs-throughput.html#lab-steps">Lab 2 steps 2–7</a>. Note that Ollama has updated itself since then (see the lab below), and the server's log lines may look a little different.</p>
+    </details>
+
+    <h2>The most important decision</h2>
+    <p>Baseten's book calls model selection "the most important decision in model performance optimization". The rule it gives is short: pick "the smallest, easiest-to-run model that's smart enough to handle the task at hand", because "inference on a smaller model with fewer parameters will be faster and cheaper than inference on a larger model".<span class="sn-ref"></span><span class="sidenote">Baseten, <em>Inference Engineering</em>, §1.3 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/model-selection/">"Model selection"</a>. Every later optimization (quantization, batching, speculative decoding) makes a model faster. None of them can make a too-big model small.</span> As an app developer you already think this way about databases: you don't pick Postgres or DynamoDB from a leaderboard, you pick from your access patterns, then benchmark with your own queries.</p>
+    <p>A model choice has four parts:</p>
+    <ol>
+      <li><strong>Who runs it?</strong> Open or closed weights, on shared or dedicated hardware.</li>
+      <li><strong>Is it smart enough?</strong> Only your own eval can tell you.</li>
+      <li><strong>Is it fast and cheap enough?</strong> Latency from Lesson 2, and cost per request.</li>
+      <li><strong>If not, what then?</strong> A bigger model, thinking, a better prompt, fine-tuning or distillation.</li>
+    </ol>
+
+    <h2>Open vs closed weights</h2>
+    <p>A <strong>closed</strong> model's weights stay with its maker. You can only use it through the maker's API, "closed models like GPT and Gemini" in the book's words.<span class="sn-ref"></span><span class="sidenote">Book §1.3 again, where it notes you can start out on pay-per-token APIs for "even closed models like GPT and Gemini". Anthropic's Claude models are closed in the same way.</span> An <strong>open-weight</strong> model's weights can be downloaded, so you can run them anywhere: on your Mac, on rented GPUs, or through someone else's API. Both of today's models are open, but they come with different licenses:</p>
+    <ul>
+      <li><strong>Qwen3</strong> is open-weighted "under Apache 2.0 license", the same license as many libraries you already depend on.<span class="sn-ref"></span><span class="sidenote">Qwen team, <a href="https://qwenlm.github.io/blog/qwen3/">"Qwen3: Think Deeper, Act Faster"</a>. Six dense sizes: 0.6B, 1.7B, 4B, 8B, 14B and 32B parameters.</span></li>
+      <li><strong>Llama 3.2</strong> uses Meta's own community license. If you ship it, you must "prominently display 'Built with Llama'", and a company with more than "700 million monthly active users" on the release date must ask Meta for a license first.<span class="sn-ref"></span><span class="sidenote">Meta, <a href="https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE">Llama 3.2 Community License</a>, §1.b.i and §2 "Additional Commercial Terms". Models trained from Llama outputs must also start their name with "Llama".</span></li>
+    </ul>
+    <p>So "open" doesn't mean "no strings". Read a model's license the way you'd read a dependency's.</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Closed (API only)</th><th>Open weights</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Where it runs</strong></td><td>the maker's servers</td><td>anywhere you have hardware, or any provider's API</td></tr>
+        <tr><td><strong>Versions</strong></td><td>the maker decides when they change or retire</td><td>you pin the exact file</td></tr>
+        <tr><td><strong>Your data</strong></td><td>leaves your network</td><td>can stay inside it</td></tr>
+        <tr><td><strong>Customizing</strong></td><td>whatever the API offers</td><td>fine-tune, distill and quantize it yourself</td></tr>
+        <tr><td><strong>Inference work for you</strong></td><td>none: that's the maker's job</td><td>all of it, unless you pay a provider</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>That last row is why an inference engineer's work is mostly with open models. The book adds a practical tip: "Stick with popular model architectures to ensure you'll find robust support across the performance tooling landscape." vLLM, llama.cpp and MLX all support Llama and Qwen on day one. A niche architecture may wait months for the same support.</p>
+
+    <h2>Shared vs dedicated inference</h2>
+    <p><strong>Shared</strong> inference means many customers send requests to the same deployment, and each pays per million tokens. Some companies "will sell consumption directly via a public shared inference API".<span class="sn-ref"></span><span class="sidenote">Baseten, <em>Inference Engineering</em>, §1.2 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/about-your-app/">"About your app"</a>.</span> <strong>Dedicated</strong> inference means GPUs reserved for you, paid by the hour whether they're busy or idle. The book warns that "cost accounting gets messy in the transition from paying per million tokens to paying directly for infrastructure."<span class="sn-ref"></span><span class="sidenote">Book, chapter 7 <a href="https://www.baseten.co/inference-engineering/book/07-production/">"Production"</a>, introduction.</span></p>
+    <p>Its advice for early products is blunt: "Before product-market fit, it's not worth spending time or money on doing your own inference." Dedicated starts to pay off once usage is large and steady. The napkin math:</p>
+    <div class="formula">break-even tokens/month = dedicated cost per month ÷ shared price per token</div>
+    <p>There's a catch Lesson 2 prepared you for. The dedicated GPU must actually <em>serve</em> those tokens at your latency target, which means enough throughput, and that's a point on your latency–throughput curve.</p>
+    <p><strong>Who the users are</strong> changes the answer. The book: "Consumer applications are generally much more cost-sensitive and have less predictable usage patterns", while "Business-to-business products often have better margins and more stable usage" and "Inference engineers building for businesses must favor latency and uptime".<span class="sn-ref"></span><span class="sidenote">Book §1.2.3 "Consumer versus B2B". Spiky consumer traffic leaves a dedicated GPU idle much of the day, so shared or autoscaled capacity usually wins there.</span> In an <strong>AI-native</strong> app, where the model <em>is</em> the product, inference is a cost on every single request. That's why these sums matter so much: "Generative AI models have unlocked a new class of applications across industries and domains", and "each category of application relies on different models and modalities and requires tailored inference."</p>
+
+    <h2>Reasoning models: paying in tokens for quality</h2>
+    <p>A <strong>reasoning model</strong> writes out its thinking before it answers. Qwen3 can do both. In thinking mode "the model takes time to reason step by step before delivering the final answer", and in non-thinking mode it gives "quick, near-instant responses". Qwen reports "scalable and smooth performance improvements that are directly correlated with the computational reasoning budget allocated".<span class="sn-ref"></span><span class="sidenote">Qwen3 blog (above), "Hybrid Thinking Modes". The blog documents <code>/think</code> and <code>/no_think</code> prompt switches. On your Ollama (0.40) they didn't work in testing, so today's tool sends <code>reasoning_effort: "none"</code> instead. That's the <code>+nothink</code> suffix.</span></p>
+    <p>For an inference engineer, a thought token costs the same as an answer token. Each one is decoded at the ITL you measured, holds a slot while it's generated, and is billed as output. There's also a measurement trap: <strong>TTFT counts the first token of any kind</strong>. A thinking model streams its first <em>thought</em> quickly, so its TTFT looks great while the user is still waiting for an answer. For reasoning models, also track the time to the first <em>answer</em> token.</p>
+
+    <h2>Evals: unit tests for a model</h2>
+    <p>"Model evaluation, or evals, is the practice of systematically measuring model intelligence." Public benchmarks help you make a shortlist, "but they have become saturated or even gamed", and "there is no substitute for directly measuring how a model performs for your application."<span class="sn-ref"></span><span class="sidenote">Book §1.3.1 "Model evaluation". For shortlisting, <a href="https://artificialanalysis.ai/methodology">Artificial Analysis</a> publishes quality, speed and price comparisons and explains how it measures them.</span></p>
+    <p>Hamel Husain's framing will feel familiar: "Unit tests for LLMs are assertions (like you would write in pytest)." He describes three levels: unit tests, human and model review, and A/B tests in production, where "The cost of Level 3 > Level 2 > Level 1."<span class="sn-ref"></span><span class="sidenote">Hamel Husain, <a href="https://hamel.dev/blog/posts/evals/">"Your AI Product Needs Evals"</a>. Also: "You must remove all friction from the process of looking at data."</span> Today's tool is Level 1. Each task has a prompt and some automatic checks, like "the answer is exactly <code>payment</code>" or "the JSON has <code>order_id</code> 40177". A task passes only if all its checks pass. The tool prints every failing answer too, because the pass rate tells you <em>that</em> a model fails, and only the answers tell you <em>why</em>.</p>
+    <p>Two cautions. Twelve tasks is a smoke test, not a verdict: each task is worth 8.3 points, so a one-task gap is noise. And run at temperature 0 with a fixed seed. The teacher's two runs of today's eval gave the same pass/fail results task for task.</p>
+
+    <h2>When it isn't good enough</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Move</th><th>What it does</th><th>What you pay</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Better prompt</strong></td><td>clearer instructions or examples</td><td>a few input tokens</td></tr>
+        <tr><td><strong>Turn on thinking</strong></td><td>the model reasons before it answers</td><td>many more output tokens, so time and money</td></tr>
+        <tr><td><strong>Bigger model</strong></td><td>more parameters, more knowledge</td><td>slower and costlier on every request</td></tr>
+        <tr><td><strong>Fine-tuning</strong></td><td>"taking a pre-trained foundation model and adapting it to a specific use case"</td><td>training data and a training run, once</td></tr>
+        <tr><td><strong>Distillation</strong></td><td>a big "teacher" trains a small "student"</td><td>a teacher model, and more effort than fine-tuning</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Fine-tuning is how you keep the model small: "If you can fine-tune a small model to pass your evals, you set yourself up for an easier time" serving it. Distillation goes further, because it "shows the student model the teacher model's actual probability distributions, not just its final answers". It "sees substantially less real-world use than fine-tuning", but there are famous examples. DeepSeek's small distilled models "showed similar reasoning behavior to the main DeepSeek-R1 model".<span class="sn-ref"></span><span class="sidenote">Book §1.3.2 "Fine-tuning" and §1.3.3 "Distillation". You'll do neither in this course; they're on the roadmap so you can reason about them in a design discussion.</span></p>
+
+    <h2>Predict first</h2>
+    <p>Three setups, on the twelve tasks of a Riyadh food-delivery support bot: <strong>llama3.2</strong> (3B), <strong>qwen3:1.7b with thinking off</strong>, and the same <strong>qwen3:1.7b with thinking on</strong>. Lock in your guesses.</p>
+    <div class="prediction" id="p-best" data-options="llama3.2 (3B)|qwen3:1.7b, thinking off|qwen3:1.7b, thinking on">
+      <p class="prompt">Which setup passes the most tasks?</p>
+    </div>
+    <div class="prediction" id="p-ttft" data-options="about the same|about 5× higher|about 30× higher">
+      <p class="prompt">Same qwen3:1.7b, thinking on vs off. What happens to <strong>TTFT p50</strong>?</p>
+    </div>
+    <div class="prediction" id="p-e2e" data-options="under 3× slower|about 5–10× slower|over 20× slower">
+      <p class="prompt">And to <strong>end-to-end latency p50</strong>?</p>
+    </div>
+
+    <h2>Lab: a mini-eval and a memo</h2>
+    <div class="lab">
+      <span class="box-label">Lab · ~35 minutes · your Mac</span>
+      <p>The tool is <a href="../labs/tools/mini_eval.py"><code>labs/tools/mini_eval.py</code></a>. It reuses <code>stream_probe.py</code>, runs every task against every model, grades the answers and prints a table. The tasks are in <a href="../labs/0003-mini-eval/tasks.json"><code>labs/0003-mini-eval/tasks.json</code></a>. <strong>New this time:</strong> each step with a write-up box can't be ticked until you've written its one sentence. That sentence is the part that makes it stick.</p>
+      <ol class="checklist" id="lab-steps">
+        <li><strong>Check the server.</strong> Start the Ollama app as usual (no special settings today), then:
+<pre><code>ollama --version
+ollama list</code></pre>
+          You should see <strong>0.40.10</strong> or newer. The app updated itself from 0.6.8 during the week (it checks for updates every hour), and single-stream speed didn't change: ITL is still ~18 ms. You need <code>qwen3:1.7b</code> (1.4 GB) and <code>llama3.2</code> (2.0 GB). Both are already on your Mac. If one is missing, <code>ollama pull qwen3:1.7b</code>.</li>
+        <li><strong>Read the task set</strong> (5 minutes). Open <code>tasks.json</code>: 12 tasks in four kinds (classify, extract, math, write), two of them in Arabic, each with its checks.
+          <div class="jot" id="j-guess" data-label="My guess"><p class="prompt">Which task will trip up the small models, and why?</p></div></li>
+        <li><strong>Run the eval</strong> (about 1 minute):
+<pre><code>cd ~/Desktop/learning
+python3 labs/tools/mini_eval.py --models llama3.2,qwen3:1.7b+nothink,qwen3:1.7b --markdown --save portfolio/data/0003-eval.jsonl</code></pre>
+          Watch the per-task lines go by. One model is much slower than the others.
+          <div class="jot" id="j-table" data-label="What the table says"><p class="prompt">From the table alone, which setup would you ship, and what worries you about it?</p></div></li>
+        <li><strong>Read every failure.</strong> Under <em>Failures</em> the tool prints each wrong answer. For each one, decide whose fault it is: the <em>model</em> (wrong answer), the <em>prompt</em> (unclear instruction) or the <em>check</em> (right answer, too strict a test).
+          <div class="jot" id="j-fail" data-label="One failure, diagnosed"><p class="prompt">Pick one failure and say whose fault it was, and how you can tell.</p></div></li>
+        <li><strong>Add two tasks from an app you've built</strong> (~10 minutes). In <code>tasks.json</code>, copy a task block, give it a new <code>id</code> and your own prompt, and pick checks from: <code>exact</code>, <code>number</code>, <code>json</code>, <code>max_words</code>, <code>contains_any</code>, <code>no_emoji</code>, <code>arabic_only</code>. Then run only your tasks:
+<pre><code>python3 labs/tools/mini_eval.py --models llama3.2,qwen3:1.7b+nothink,qwen3:1.7b --only my-task-1,my-task-2</code></pre>
+          <div class="jot" id="j-own" data-label="My own tasks"><p class="prompt">Did your tasks change which setup you'd pick? Did a check need fixing?</p></div></li>
+        <li><strong>Put a price on it.</strong> Re-run the full set with made-up round prices, $0.10 per million input tokens and $0.40 per million output tokens:
+<pre><code>python3 labs/tools/mini_eval.py --models llama3.2,qwen3:1.7b+nothink,qwen3:1.7b --price-in 0.10 --price-out 0.40</code></pre>
+          Real prices change every month, so look up current ones on Artificial Analysis when you need them. The ratios between models are what matter today.
+          <div class="jot" id="j-cost" data-label="Cost"><p class="prompt">How many times more does thinking cost per request, and where does the extra come from?</p></div></li>
+        <li><strong>Check your numbers.</strong> Copy them from the step 3 table into the form below and press <em>Check my results</em>. It compares them with your predictions.</li>
+        <li><strong>Write the memo</strong> (~10 minutes). In <a href="../portfolio/LOG.md"><code>portfolio/LOG.md</code></a>, fill in the <em>0003</em> section: one page, using your own numbers. Press <em>Copy my write-ups as Markdown</em> below to paste your five sentences in first. Most of the memo is already in them.</li>
+      </ol>
+      <div class="jot-collect" data-heading="**Lab write-ups:**"></div>
+    </div>
+
+    <form class="lab-results" data-check="l03" id="l03-results">
+      <p><strong>Your results.</strong> From the step 3 table (no own tasks). Fill in any subset, then check.</p>
+      <div class="grid">
+        <label>Tasks in the run<input name="total" inputmode="decimal" value="12"></label>
+        <label>llama3.2 · passed<input name="llama_pass" inputmode="decimal"></label>
+        <label>qwen3 thinking off · passed<input name="off_pass" inputmode="decimal"></label>
+        <label>qwen3 thinking on · passed<input name="on_pass" inputmode="decimal"></label>
+        <label>qwen3 thinking off · TTFT p50 (ms)<input name="off_ttft" inputmode="decimal"></label>
+        <label>qwen3 thinking on · TTFT p50 (ms)<input name="on_ttft" inputmode="decimal"></label>
+        <label>qwen3 thinking off · E2E p50 (ms)<input name="off_e2e" inputmode="decimal"></label>
+        <label>qwen3 thinking on · E2E p50 (ms)<input name="on_e2e" inputmode="decimal"></label>
+        <label>qwen3 thinking off · out tok<input name="off_tok" inputmode="decimal"></label>
+        <label>qwen3 thinking on · out tok<input name="on_tok" inputmode="decimal"></label>
+      </div>
+      <button class="btn" type="submit">Check my results</button>
+    </form>
+
+    <details>
+      <summary>Compare with your teacher's run (open after you've run your own)</summary>
+      <p>Run on your Mac on 24 Oct 2026: Ollama 0.40.10, temperature 0, seed 42, 12 tasks, about 57 s in all. Two runs gave the same pass/fail results task for task.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Setup</th><th class="num">Passed</th><th class="num">E2E p50</th><th class="num">E2E p95</th><th class="num">TTFT p50</th><th class="num">Out tok</th><th class="num">$/1k req*</th></tr></thead>
+        <tbody>
+          <tr><td>llama3.2 (3B)</td><td class="num">10/12</td><td class="num">138 ms</td><td class="num">596 ms</td><td class="num">99 ms</td><td class="num">9</td><td class="num">$0.013</td></tr>
+          <tr><td>qwen3:1.7b, thinking off</td><td class="num">6/12</td><td class="num">130 ms</td><td class="num">506 ms</td><td class="num">81 ms</td><td class="num">9</td><td class="num">$0.013</td></tr>
+          <tr><td>qwen3:1.7b, thinking on</td><td class="num">12/12</td><td class="num">3,865&nbsp;ms</td><td class="num">7,026&nbsp;ms</td><td class="num">87 ms</td><td class="num">302</td><td class="num">$0.129</td></tr>
+        </tbody>
+        <caption>* At the made-up prices of $0.10 / $0.40 per million input / output tokens. Prompts averaged ~91 input tokens.</caption>
+      </table>
+      </div>
+      <figure class="chart" data-csv-src="teacher-eval" data-charts='[{"x":"e2e_p50","y":"passed","xlabel":"E2E p50 (ms), lower is better","ylabel":"tasks passed (of 12)","title":"Quality vs latency"}]'>
+        <figcaption>The ideal model would sit top-left: right and fast. Nothing does. Thinking buys the last 2–6 tasks at ~28× the latency and ~10× the cost.</figcaption>
+      </figure>
+      <script type="text/csv" id="teacher-eval">
+label,load,e2e_p50,passed
+llama3.2,10/12,138,10
+qwen3 no-think,6/12,130,6
+qwen3 think,12/12,3865,12
+      </script>
+      <p><strong>By kind:</strong> llama3.2 got classify 5/5, extract 2/2, math 1/3 and write 2/2. qwen3 with thinking off got classify 2/5, extract 2/2, math 0/3 and write 2/2. With thinking on it got everything.</p>
+      <p><strong>The failures</strong> were all the model's fault this time. llama3.2 answered <code>45</code> to both the discount (52.2) and shift (21) questions. qwen3 with thinking off labelled the password and wrong-item tickets <code>late_delivery</code> and the Arabic double-charge ticket <code>wrong_item</code>, and got all three sums wrong. With your own tasks, expect some failures to be the check's fault.</p>
+      <p class="muted">TTFT is the trap: 87 ms with thinking on looks as fast as 81 ms with it off, but those 87 ms brought the first <em>thought</em>. The answer arrived ~3.8 s later. The extra cost is all output: ~302 tokens instead of ~9.</p>
+    </details>
+
+    <h2>Exercises</h2>
+    <p>From memory first.</p>
+    <div class="exercise-set">
+      <div class="mcq" id="q-pmf">
+        <p class="prompt">A two-person startup is adding an AI feature and hasn't found product-market fit yet. Where should it run inference?</p>
+        <ul>
+          <li data-correct>On a shared API, paying for each token it uses</li>
+          <li>On dedicated GPUs, so that its monthly bill stays fixed</li>
+          <li>On its own servers, so it learns inference early on</li>
+          <li>On a fine-tuned model, so quality beats the big APIs</li>
+        </ul>
+        <div class="explanation">The book: "Before product-market fit, it's not worth spending time or money on doing your own inference." Shared APIs mean no idle GPUs and no operations work. Look again once usage is large and steady (the break-even below), or when latency, privacy or customization needs force the move.</div>
+      </div>
+
+      <div class="mcq" id="q-bench">
+        <p class="prompt">Model A tops a public benchmark. Model B scores slightly lower, is half the size and is cheaper to run. What should decide between them?</p>
+        <ul>
+          <li data-correct>A test set built from your own app's real tasks</li>
+          <li>The leaderboard rank, since it tests many tasks at once</li>
+          <li>The model with more parameters, since bigger is always smarter</li>
+          <li>The newer of the two, since newer releases are better</li>
+        </ul>
+        <div class="explanation">Benchmarks are for shortlisting. They "have become saturated or even gamed", and "there is no substitute for directly measuring how a model performs for your application." Today, the 3B llama3.2 beat the 1.7B qwen3 with thinking off, and lost to the same 1.7B with thinking on. Size alone didn't predict the ranking.</div>
+      </div>
+
+      <div class="mcq" id="q-ttft">
+        <p class="prompt">Your dashboard shows a reasoning model's TTFT p50 at 87 ms, but users say answers take about 4 seconds. What explains the gap?</p>
+        <ul>
+          <li data-correct>The first streamed tokens are thinking, not the answer</li>
+          <li>The dashboard measures TTFT on the server, not client</li>
+          <li>The answers are long, so decoding takes the time</li>
+          <li>The requests queue on the server before any prefill</li>
+        </ul>
+        <div class="explanation">TTFT measures the first token of any kind. A thinking model streams its first thought almost at once, then spends seconds thinking before the answer starts. Today's answers were one word long, yet E2E was ~3.9 s, because ~300 tokens of thinking came first. Track the time to the first <em>answer</em> token separately.</div>
+      </div>
+
+      <div class="mcq" id="q-license">
+        <p class="prompt">Your (imaginary) app already had 900 million monthly active users when both models were released. Which one can you ship without asking its maker first?</p>
+        <ul>
+          <li data-correct>Qwen3, released under the Apache 2.0 license</li>
+          <li>Llama 3.2, released under its community license</li>
+          <li>Either, since open weights have no terms</li>
+          <li>Neither, since open weights ban commercial use</li>
+        </ul>
+        <div class="explanation">The Llama 3.2 license says a licensee with "greater than 700 million monthly active users" on the release date "must request a license from Meta". Apache 2.0 has no such clause. Open weights are not the same as no terms, so read the license as you would a dependency's.</div>
+      </div>
+
+      <div class="mcq" id="q-fail">
+        <p class="prompt">In your eval, llama3.2 answered <code>45</code> to the delivery-shift question (the right answer is 21). What should you do first?</p>
+        <ul>
+          <li data-correct>Read the answer and decide: model, prompt or check</li>
+          <li>Switch to a bigger model and run every task</li>
+          <li>Delete the task, since one failure is only noise</li>
+          <li>Raise the temperature so the model tries other answers</li>
+        </ul>
+        <div class="explanation">Look at the data first: "You must remove all friction from the process of looking at data." Here it's the model (7.5 h − 0.5 h = 420 min ÷ 20 = 21). With your own tasks it's often the check (<code>Late delivery</code> isn't <code>late_delivery</code>) or the prompt. The fix is different for each.</div>
+      </div>
+
+      <div class="mcq" id="q-distill">
+        <p class="prompt">What does distillation give a small model that ordinary fine-tuning on the big model's answers doesn't?</p>
+        <ul>
+          <li data-correct>The teacher's probabilities for every token, not just answers</li>
+          <li>The teacher's weights copied directly into the smaller model</li>
+          <li>The teacher's thinking text, shown before every final answer</li>
+          <li>The teacher's hardware, so the student runs equally fast</li>
+        </ul>
+        <div class="explanation">Distillation "shows the student model the teacher model's actual probability distributions, not just its final answers". For each token, the student learns how likely the teacher thought every option was, not just which one it picked. It's used less than fine-tuning because it needs the teacher running alongside.</div>
+      </div>
+
+      <div class="numeric" id="n-cost" data-answer="0.158" data-tol="0.03" data-unit="$ per 1,000 requests">
+        <p class="prompt">A reasoning model reads 300 input tokens and writes 300 thinking tokens plus a 20-token answer. Prices: $0.10 per million input tokens, $0.40 per million output tokens. What do 1,000 requests cost?</p>
+        <div class="solution">Per request: 300 × $0.10/1M + 320 × $0.40/1M = $0.00003 + $0.000128 = $0.000158. Times 1,000 = <strong>$0.158</strong>. Without thinking it would be 300 × 0.10 + 20 × 0.40 = $0.038 per 1,000, about 4× less. Thinking tokens are billed as output, which usually costs more per token than input.</div>
+      </div>
+
+      <div class="numeric" id="n-breakeven" data-answer="2880" data-tol="0.02" data-unit="million tokens / month">
+        <p class="prompt">Imaginary prices: a dedicated GPU costs $2 per hour, around the clock (30-day month). A shared API charges $0.50 per million tokens. How many tokens per month must you serve before dedicated is cheaper?</p>
+        <div class="solution">Dedicated: $2 × 24 × 30 = $1,440 a month. Break-even: $1,440 ÷ $0.50 per million = <strong>2,880 million tokens</strong> (2.9 billion) a month. Below that, shared is cheaper. This ignores the engineering time to run your own deployment, which pushes the real break-even higher.</div>
+      </div>
+
+      <div class="numeric" id="n-sustain" data-answer="1111" data-tol="0.03" data-unit="tokens/s">
+        <p class="prompt">Same GPU. To reach that break-even, what average throughput must it serve, every second of the month?</p>
+        <div class="solution">A 30-day month is 30 × 86,400 = 2,592,000 s. 2.88 billion ÷ 2.592 million ≈ <strong>1,111 tokens/s</strong>, day and night. Your Mac did ~50–75. Spiky consumer traffic makes it harder: at 3 a.m. the GPU is idle but still billed. That's why the break-even question is really a question about your latency–throughput curve and your traffic shape.</div>
+      </div>
+
+      <div class="explain" id="e-memo">
+        <p class="prompt">In two to four sentences, as if to a product manager: which of today's three setups would you ship for the delivery-app bot, and what would you try next? Use your numbers.</p>
+        <div class="model-answer"><strong>Model answer.</strong> None of the three is ready as it stands. llama3.2 is fast (~140 ms p50) and got every triage, extraction and reply task right, but it failed 2 of the 3 arithmetic tasks. qwen3:1.7b with thinking passed all 12, but at ~3.9 s p50 and ~10× the cost per request. I'd ship llama3.2 for triage, extraction and replies, and take the arithmetic away from the model: refunds and discounts get calculated in the backend, where they're exact. Next, I'd grow the eval to 50+ real tickets, including more Arabic, before trusting any one-task difference.</div>
+      </div>
+    </div>
+
+    <div class="scoreboard"></div>
+
+    <h2>Make it stick</h2>
+    <p>On <strong>day 3</strong>, press <em>Reset exercises</em> on <a href="0002-latency-vs-throughput.html">Lesson 2</a> and redo them, then do the same here. Mixing them is the point: a model choice is a latency–throughput question as much as a quality one. On <strong>day 7</strong>, redo this lesson's exercises alone. The new <a href="../reference/model-selection.html">model selection reference</a> has the checklist, the formulas and the memo template on one page.</p>
+
+    <div class="source">
+      <span class="box-label">Primary source · read after the lab (~45 min)</span>
+      <p>Baseten, <em>Inference Engineering</em>, <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/model-selection/"><strong>§1.3 "Model selection"</strong></a> (~15 min). It covers this lesson's roadmap nodes on evals, fine-tuning and distillation. Then Hamel Husain, <a href="https://hamel.dev/blog/posts/evals/"><strong>"Your AI Product Needs Evals"</strong></a> (~30 min), the most practical piece written on the subject. While reading Hamel, find the part about writing unit tests from real failures, and decide which of today's failures you'd turn into a permanent test.</p>
+    </div>
+
+    <div class="source">
+      <span class="box-label">Talk to practitioners</span>
+      <p>Arabic is where small models struggle most, and the Gulf market needs it. Ask on <a href="https://www.reddit.com/r/LocalLLaMA/">r/LocalLLaMA</a>: "Which small open model (under 4B) handles Arabic classification best, with or without thinking?" Include your two Arabic task results. Search the sub for "Arabic" first, since there may already be a thread with real numbers.</p>
+    </div>
+
+    <div class="ask">
+      <span class="box-label">Ask your teacher</span>
+      <p>Ask anything that's unclear, for example "How would I eval the Arabic replies for tone, not just script?" (that's Level 2: a model as a judge), or "When would I pick a closed model for a client?" When you finish, paste your memo (or just your five write-ups) in the terminal. Lesson 4 starts from them.</p>
+    </div>
+
+    <div class="pager">
+      <a href="0002-latency-vs-throughput.html">← Lesson 2, latency vs throughput</a>
+      <span class="disabled">Next: Lesson 4, neural networks for engineers (generated when you're ready) →</span>
+    </div>
+  </article>
+</div>
+
+<script>
+  /* Lesson-specific checker for the results form (feedback loop for the lab). */
+  window.LabChecks = window.LabChecks || {};
+  LabChecks.l03 = function (v) {
+    const out = [];
+    const ok = (x) => Number.isFinite(x);
+    const predicted = (id) => IECourse.store.get(IECourse.key(id), null);
+    const compare = (id, actual, label) => {
+      const p = predicted(id);
+      if (!p) return;
+      const hit = Array.isArray(actual) ? actual.includes(p) : p === actual;
+      const said = Array.isArray(actual) ? actual.join("” / “") : actual;
+      out.push(hit
+        ? { ok: true, msg: `Your prediction for ${label} (“${p}”) matches your data.` }
+        : { ok: false, msg: `You predicted ${label} would be “${p}”; your data says “${said}”. Take two minutes on why before moving on.` });
+    };
+    const n = ok(v.total) && v.total > 0 ? v.total : 12;
+    const ms = (x) => Math.round(x).toLocaleString() + " ms";
+
+    const setups = [["llama3.2 (3B)", v.llama_pass], ["qwen3:1.7b, thinking off", v.off_pass], ["qwen3:1.7b, thinking on", v.on_pass]].filter((s) => ok(s[1]));
+    if (setups.length === 3) {
+      const best = Math.max(...setups.map((s) => s[1]));
+      const winners = setups.filter((s) => s[1] === best).map((s) => s[0]);
+      out.push({ ok: true, msg: `Most tasks passed: <strong>${winners.join(" and ")}</strong>, ${best}/${n}. Each task is worth ${(100 / n).toFixed(1)} points, so a one-task gap in a set this small is noise, not a ranking.` });
+      compare("p-best", winners, "the best setup");
+      if (v.on_pass < v.off_pass) out.push({ ok: null, msg: "Thinking on passed <em>fewer</em> tasks than thinking off. That's unusual. Check the failures: did a thinking answer run out of tokens before it finished (raise <code>--max-tokens</code>)?" });
+    }
+    if (ok(v.off_ttft) && ok(v.on_ttft) && v.off_ttft > 0) {
+      const r = v.on_ttft / v.off_ttft;
+      compare("p-ttft", r < 2 ? "about the same" : r < 15 ? "about 5× higher" : "about 30× higher", "thinking's TTFT");
+      out.push({ ok: null, msg: `TTFT p50: ${ms(v.off_ttft)} off vs ${ms(v.on_ttft)} on (${r.toFixed(1)}×). With thinking on, the first token is a <em>thought</em>, so TTFT barely moves while the user waits much longer for an answer.` });
+    }
+    if (ok(v.off_e2e) && ok(v.on_e2e) && v.off_e2e > 0) {
+      const r = v.on_e2e / v.off_e2e;
+      compare("p-e2e", r < 4 ? "under 3× slower" : r < 15 ? "about 5–10× slower" : "over 20× slower", "thinking's end-to-end latency");
+      out.push({ ok: true, msg: `End to end, thinking is <strong>${r.toFixed(0)}× slower</strong> (${ms(v.off_e2e)} → ${ms(v.on_e2e)}).` });
+      if (v.on_e2e < 1000) out.push({ ok: false, msg: "Under a second with thinking on? The model may not have thought at all. Check you ran <code>qwen3:1.7b</code> without <code>+nothink</code>, and that its out tok is in the hundreds." });
+    }
+    if (ok(v.off_tok) && ok(v.on_tok) && v.off_tok > 0) {
+      const r = v.on_tok / v.off_tok;
+      out.push({ ok: null, msg: `Output tokens: ~${Math.round(v.off_tok)} → ~${Math.round(v.on_tok)} per request (${r.toFixed(0)}×). Every one of them is decoded at your ITL, holds a slot, and is billed as output. That's where thinking's extra cost comes from.` });
+    }
+    if (ok(v.llama_pass) && n === 12 && Math.abs(v.llama_pass - 10) > 1)
+      out.push({ ok: null, msg: `llama3.2 passed ${v.llama_pass}/12 here and 10/12 in the teacher's run. At temperature 0 and seed 42 they should be close. Did a task or check change in <code>tasks.json</code>?` });
+    if (!out.length) out.push({ ok: null, msg: "Fill in at least the three pass counts from the step 3 table." });
+    return out;
+  };
+</script>
+<script src="../assets/diagrams.js"></script>
+<script src="../assets/components.js"></script>
+<script src="../assets/charts.js"></script>
+</body>
+</html>

@@ -11,6 +11,7 @@ cd ~/Desktop/learning
 - `labs/tools/`: reusable tools that later lessons build on.
   - `stream_probe.py` measures TTFT, ITL, decode tokens/s and end-to-end latency against any OpenAI-compatible server (Ollama, llama.cpp, vLLM, SGLang). Standard library only. Run `python3 labs/tools/stream_probe.py --help`.
   - `load_test.py` (Lesson 2) sends many requests at once, closed loop (`--concurrency 1,2,4,8`) or open loop (`--rate 0.3`), and reports TTFT/E2E p50/p95/p99, ITL, throughput and req/s per load level. `--csv` output pastes into the Lesson 2 plotter. Reuses `stream_probe.py`; standard library only.
+  - `mini_eval.py` (Lesson 3) runs a task set (`labs/0003-mini-eval/tasks.json`) against several models and reports pass rate, E2E/TTFT p50/p95, output tokens, decode tok/s and, with `--price-in/--price-out`, $ per 1,000 requests, then prints every failing answer. Add `+nothink` to a model name (`qwen3:1.7b+nothink`) to turn thinking off. `--only id1,id2` runs a subset, `--markdown` prints a table for `LOG.md`. Reuses `stream_probe.py`; standard library only.
 - `labs/NNNN-*/`: files for one lesson's lab (notebooks for Colab/Kaggle, configs, data).
 - `portfolio/LOG.md`: where each lab's results go.
 
@@ -18,7 +19,7 @@ cd ~/Desktop/learning
 
 | Where | Used for | Status |
 |---|---|---|
-| Mac: Ollama | Lessons 1–3 (serving and measuring) | Installed: **0.6.8** in `/Applications/Ollama.app`; `llama3.2` already downloaded |
+| Mac: Ollama | Lessons 1–3 (serving and measuring) | Installed: **0.40.10** in `/Applications/Ollama.app` (auto-updated from 0.6.8 during Week 1); `llama3.2` and `qwen3:1.7b` downloaded |
 | Mac: Python 3.12 + uv | PyTorch/MLX/HF labs and load-test tools from Lesson 4 | Set up in Lesson 4 |
 | Mac: llama.cpp | Benchmarks, quantization, speculative decoding, caching, `/metrics` | Installed when needed (`brew install llama.cpp`) |
 | Mac: mlx-lm | Apple's own engine: generation, quantization, draft models | Installed when needed (`uv pip install mlx-lm`) |
@@ -50,8 +51,9 @@ Keep the total under about 10 GB. Full-precision Qwen3-4B (8 GB) is for Colab/Ka
 ## Gotchas to know in advance
 
 - **No FlashAttention-2 and no bf16 on a T4.** Always use `--dtype half` there. Lesson 11 explains why.
-- **Don't upgrade Ollama during the course.** Your Lesson 1 baseline was measured on 0.6.8. Newer versions change the engine (from v0.40 models run on MLX), so numbers stop being comparable.
-- **Set `OLLAMA_NUM_PARALLEL` yourself for load tests.** In 0.6.8 the default is "auto", which picked 2 parallel slots on this Mac (today's docs say 1). Quit the menu-bar app, then run `OLLAMA_NUM_PARALLEL=1 ollama serve` in its own tab; the startup log prints the value, and the model-load line shows `--parallel N --ctx-size M`. Each slot gets its own context, so memory grows with the slot count.
+- **The Ollama app updates itself** (it checks about once an hour). Lessons 1–2 were measured on 0.6.8; it moved to 0.40.10 during Week 1. Single-stream llama3.2 was re-checked on 0.40.10 at ~18 ms ITL, the same as before, but note the version next to every result in `LOG.md` and re-measure a baseline before comparing across versions.
+- **Turning off Qwen3's thinking on Ollama 0.40:** the `/no_think` prompt switch from Qwen's blog didn't work in testing. Send `"reasoning_effort": "none"` in the request instead (that's what `mini_eval.py`'s `+nothink` does). The thinking text streams in `delta.reasoning`, separately from `delta.content`.
+- **Set `OLLAMA_NUM_PARALLEL` yourself for load tests.** In 0.6.8 the default was "auto", which picked 2 parallel slots on this Mac; on 0.40 the default is 1. Quit the menu-bar app, then run `OLLAMA_NUM_PARALLEL=1 ollama serve` in its own tab; the startup log prints the value, and the model-load line shows `--parallel N --ctx-size M`. Each slot gets its own context, so memory grows with the slot count.
 - **In 0.6.8, `ollama serve` doesn't launch the menu-bar app**, and only one server can hold port 11434 (`address already in use` means the app is still running).
 - **Always pass `--port`.** llama-server and mlx_lm.server both default to 8080, and Prometheus and macmon both use 9090.
 - **llama.cpp flags change often**, and many tutorials are stale. Trust `llama-server --help` and the lesson.

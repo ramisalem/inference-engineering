@@ -5,6 +5,7 @@
  *   <div class="numeric" id="..." data-answer="6145" data-tol="0.05" data-unit="ms">  .prompt, .solution
  *   <div class="explain" id="...">   .prompt, .model-answer       (free recall + self-grading)
  *   <ol class="checklist" id="...">  lab steps with persisted checkboxes
+ *   <div class="jot" id="..." data-label="...">  one-sentence write-up inside a lab step; .jot-collect copies them all
  *   <form class="lab-results" data-check="name">  inputs; window.LabChecks[name](values) -> [{ok, msg}]
  *   <div class="scoreboard"></div>   first-try score + "mark lesson complete"
  *   <button class="theme-toggle"></button>
@@ -202,6 +203,34 @@
     render();
   }
 
+  /* ---------------- jot: a one-sentence write-up inside a lab step ----------------
+   * <div class="jot" id="j-run" data-label="What the table says"><p class="prompt">…</p></div>
+   * Inside a .checklist step, the step can't be ticked until its jot has text: the write-up is part of the step.
+   * <div class="jot-collect" data-heading="**Write-ups:**"></div> gathers every jot on the page as Markdown
+   * for portfolio/LOG.md. */
+  function initJot(box, idx) {
+    const id = box.id || `jot${idx}`;
+    const ta = el("textarea", { rows: "2", placeholder: "One sentence, in your own words…", "aria-label": box.dataset.label || "your sentence" });
+    ta.value = store.get(KEY(id), "");
+    ta.addEventListener("input", () => { store.set(KEY(id), ta.value); box.classList.remove("needed"); });
+    box.append(ta);
+  }
+
+  function initJotCollect(box) {
+    const btn = el("button", { class: "btn", type: "button" }, "Copy my write-ups as Markdown");
+    const pre = el("pre", { class: "no-copy" });
+    pre.hidden = true;
+    btn.addEventListener("click", async () => {
+      const lines = [...document.querySelectorAll(".jot")].map((j) =>
+        `**${j.dataset.label || "Note"}:** ${j.querySelector("textarea").value.trim() || "(blank)"}`);
+      const md = (box.dataset.heading ? box.dataset.heading + "\n\n" : "") + lines.join("\n\n");
+      pre.textContent = md; pre.hidden = false;
+      try { await navigator.clipboard.writeText(md); btn.textContent = "Copied. Paste it into portfolio/LOG.md"; }
+      catch (e) { btn.textContent = "Select the text below and copy it"; }
+    });
+    box.append(btn, pre);
+  }
+
   /* ---------------- lab checklist ---------------- */
   function initChecklist(list, idx) {
     const id = list.id || `chk${idx}`;
@@ -210,7 +239,13 @@
       const cb = el("input", { type: "checkbox", "aria-label": `step ${i + 1} done` });
       cb.checked = !!state[i];
       li.classList.toggle("done", cb.checked);
-      cb.addEventListener("change", () => { state[i] = cb.checked; li.classList.toggle("done", cb.checked); store.set(KEY(id), state); });
+      cb.addEventListener("change", () => {
+        const jot = li.querySelector(".jot textarea");
+        if (cb.checked && jot && !jot.value.trim()) {   // the write-up is part of the step
+          cb.checked = false; jot.closest(".jot").classList.add("needed"); jot.focus(); return;
+        }
+        state[i] = cb.checked; li.classList.toggle("done", cb.checked); store.set(KEY(id), state);
+      });
       li.prepend(cb);
     });
   }
@@ -420,6 +455,8 @@
     document.querySelectorAll(".numeric").forEach((b, i) => getters.push(initNumeric(b, i)));
     document.querySelectorAll(".explain").forEach((b, i) => getters.push(initExplain(b, i)));
     document.querySelectorAll(".prediction").forEach(initPrediction);
+    document.querySelectorAll(".jot").forEach(initJot);   // before checklists, which check them
+    document.querySelectorAll(".jot-collect").forEach(initJotCollect);
     document.querySelectorAll(".checklist").forEach(initChecklist);
     document.querySelectorAll("form.lab-results").forEach(initLabResults);
     document.querySelectorAll("pre").forEach(initCopy);

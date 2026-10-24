@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Selection</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body data-root="../">
+<div class="page">
+  <nav class="topnav">
+    <span class="brand">Inference Engineering</span>
+    <a href="syllabus.html">Syllabus</a>
+    <a href="schedule.html">Schedule</a>
+    <a href="latency-metrics.html">Latency metrics</a>
+    <a href="../lessons/0003-choosing-a-model.html">Lesson 3</a>
+    <button class="theme-toggle" type="button"></button>
+  </nav>
+
+  <article>
+    <span class="eyebrow">Reference · from Lesson 3</span>
+    <h1>Model selection</h1>
+    <p class="subtitle">How to pick a model and prove the pick, on one page.</p>
+
+    <h2>The rule</h2>
+    <p>Pick "the smallest, easiest-to-run model that's smart enough to handle the task at hand".<span class="sn-ref"></span><span class="sidenote">Baseten, <em>Inference Engineering</em> §1.3 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/model-selection/">"Model selection"</a>.</span> "Smart enough" is decided by <em>your</em> eval, not a leaderboard.</p>
+
+    <h2>Checklist</h2>
+    <ol>
+      <li><strong>Write down the job.</strong> Task kinds, languages, latency target (p50 and p95), volume, budget, data rules.</li>
+      <li><strong>Shortlist</strong> 2–4 candidates from public benchmarks (for example <a href="https://artificialanalysis.ai/methodology">Artificial Analysis</a>). Prefer popular architectures, since tooling supports them first.</li>
+      <li><strong>Read the licenses.</strong> Open weights still have terms.</li>
+      <li><strong>Build an eval from real tasks.</strong> Start with 10–20, grow to 50+. Temperature 0, fixed seed.</li>
+      <li><strong>Run it.</strong> Record pass rate, E2E p50/p95, TTFT, output tokens and $/1k requests.</li>
+      <li><strong>Read every failure:</strong> model, prompt or check?</li>
+      <li><strong>Decide</strong>, and say what would change your mind.</li>
+    </ol>
+
+    <h2>Open vs closed weights</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Closed (API only)</th><th>Open weights</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Where it runs</strong></td><td>the maker's servers</td><td>anywhere, or any provider's API</td></tr>
+        <tr><td><strong>Versions</strong></td><td>the maker changes or retires them</td><td>you pin the exact file</td></tr>
+        <tr><td><strong>Your data</strong></td><td>leaves your network</td><td>can stay inside it</td></tr>
+        <tr><td><strong>Customizing</strong></td><td>what the API offers</td><td>fine-tune, distill, quantize</td></tr>
+        <tr><td><strong>Inference work</strong></td><td>none for you</td><td>all of it, unless you pay a provider</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted" style="font-size:.85rem"><strong>Licenses seen so far:</strong> Qwen3 is Apache 2.0.<span class="sn-ref"></span><span class="sidenote"><a href="https://qwenlm.github.io/blog/qwen3/">Qwen3 blog</a>.</span> Llama 3.2 requires "Built with Llama" to be displayed, derived model names to start with "Llama", and a separate license from Meta above 700 million monthly active users.<span class="sn-ref"></span><span class="sidenote"><a href="https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE">Llama 3.2 Community License</a>.</span></p>
+
+    <h2>Shared vs dedicated</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Shared (per token)</th><th>Dedicated (per GPU-hour)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>You pay for</strong></td><td>tokens used</td><td>hours reserved, busy or idle</td></tr>
+        <tr><td><strong>Good when</strong></td><td>before product-market fit; spiky, small or unknown traffic</td><td>large, steady traffic; strict latency, privacy or custom models</td></tr>
+        <tr><td><strong>Typical fit</strong></td><td>consumer apps (cost-sensitive, unpredictable)</td><td>B2B (stable usage, latency and uptime matter)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="formula">break-even tokens/month = GPU $/hour × 720 ÷ shared $ per token</div>
+    <div class="formula">needed average throughput = break-even tokens ÷ 2,592,000 s</div>
+    <p class="muted" style="font-size:.85rem">Example (made-up prices): $2/h → $1,440/month; at $0.50 per million tokens the break-even is 2,880 M tokens/month, or ~1,111 tok/s around the clock, at your latency target. Engineering time pushes the real break-even higher.</p>
+
+    <h2>Cost per request</h2>
+    <div class="formula">$/1k requests = (input tok × $in + output tok × $out) ÷ 1,000,000 × 1,000</div>
+    <p>Thinking tokens are <strong>output</strong> tokens: decoded at ITL, holding a slot, billed at the output price. With thinking, TTFT measures the first <em>thought</em>, so also track the time to the first answer token.</p>
+
+    <h2>When it isn't good enough</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Move, cheapest first</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr><td>Better prompt, or move the work to code (for example arithmetic)</td><td>a few tokens, or nothing</td></tr>
+        <tr><td>Turn on thinking</td><td>many output tokens, every request</td></tr>
+        <tr><td>Bigger model</td><td>slower and costlier, every request</td></tr>
+        <tr><td>Fine-tune a small model</td><td>data and a training run, once</td></tr>
+        <tr><td>Distill from a big teacher (learns its token probabilities)</td><td>a teacher model and more effort</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2><code>mini_eval.py</code> checks</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Check</th><th>Passes when the answer…</th><th>Example in <code>tasks.json</code></th></tr></thead>
+      <tbody>
+        <tr><td><code>exact</code></td><td>equals the value (trimmed, case-insensitive)</td><td><code>{"type": "exact", "value": "payment"}</code></td></tr>
+        <tr><td><code>number</code></td><td>contains exactly one number, equal to the value</td><td><code>{"type": "number", "value": 52.2}</code></td></tr>
+        <tr><td><code>json</code></td><td>contains a JSON object with these fields</td><td><code>{"type": "json", "fields": {"order_id": "40177"}}</code></td></tr>
+        <tr><td><code>max_words</code></td><td>has at most N words</td><td><code>{"type": "max_words", "value": 25}</code></td></tr>
+        <tr><td><code>contains_any</code></td><td>includes one of the strings (lowercase them)</td><td><code>{"type": "contains_any", "value": ["sorry", "apolog"]}</code></td></tr>
+        <tr><td><code>no_emoji</code></td><td>has no emoji</td><td><code>{"type": "no_emoji"}</code></td></tr>
+        <tr><td><code>arabic_only</code></td><td>has Arabic letters and no Latin ones</td><td><code>{"type": "arabic_only"}</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+<pre><code>python3 labs/tools/mini_eval.py --models llama3.2,qwen3:1.7b+nothink,qwen3:1.7b \
+  --markdown --save portfolio/data/0003-eval.jsonl \
+  [--only id1,id2] [--price-in 0.10 --price-out 0.40]</code></pre>
+    <p class="muted" style="font-size:.85rem">A task passes only if every check in its <code>"checks"</code> list passes. <code>+nothink</code> sends <code>reasoning_effort: "none"</code> (Qwen3's <code>/no_think</code> didn't work on Ollama 0.40).</p>
+
+    <h2>Memo template (one page)</h2>
+    <ol>
+      <li><strong>Use case and constraints:</strong> the job, latency target, volume, budget, data rules.</li>
+      <li><strong>Candidates</strong> and why they were shortlisted.</li>
+      <li><strong>Eval:</strong> how many tasks, what kinds, which checks, settings.</li>
+      <li><strong>Results:</strong> the table.</li>
+      <li><strong>Recommendation.</strong></li>
+      <li><strong>Why not the others.</strong></li>
+      <li><strong>Risks, and what would change my mind.</strong></li>
+      <li><strong>Next step.</strong></li>
+    </ol>
+
+    <h2>Lesson 3 baseline <span class="muted" style="font-size:.8rem;font-weight:400">(M1 Pro 16 GB, Ollama 0.40.10, 12 tasks)</span></h2>
+    <table>
+      <thead><tr><th>Setup</th><th class="num">Passed</th><th class="num">E2E p50</th><th class="num">TTFT p50</th><th class="num">Out tok</th></tr></thead>
+      <tbody>
+        <tr><td>llama3.2 (3B)</td><td class="num">10/12</td><td class="num">138 ms</td><td class="num">99 ms</td><td class="num">9</td></tr>
+        <tr><td>qwen3:1.7b, thinking off</td><td class="num">6/12</td><td class="num">130 ms</td><td class="num">81 ms</td><td class="num">9</td></tr>
+        <tr><td>qwen3:1.7b, thinking on</td><td class="num">12/12</td><td class="num">3,865&nbsp;ms</td><td class="num">87 ms</td><td class="num">302</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Sources</h2>
+    <ul>
+      <li>Baseten, <em>Inference Engineering</em> §1.2 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/about-your-app/">"About your app"</a> and §1.3 <a href="https://www.baseten.co/inference-engineering/book/01-prerequisites/model-selection/">"Model selection"</a>: AI-native apps, consumer vs B2B, evals, fine-tuning, distillation.</li>
+      <li>Hamel Husain, <a href="https://hamel.dev/blog/posts/evals/">"Your AI Product Needs Evals"</a>: the three eval levels, and looking at data.</li>
+      <li>Qwen team, <a href="https://qwenlm.github.io/blog/qwen3/">"Qwen3: Think Deeper, Act Faster"</a>: hybrid thinking, model sizes, license.</li>
+      <li>Meta, <a href="https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE">Llama 3.2 Community License</a>.</li>
+      <li>Artificial Analysis, <a href="https://artificialanalysis.ai/methodology">"Methodology"</a>: how its quality, speed and price comparisons are measured.</li>
+    </ul>
+  </article>
+</div>
+<script src="../assets/diagrams.js"></script>
+<script src="../assets/components.js"></script>
+</body>
+</html>

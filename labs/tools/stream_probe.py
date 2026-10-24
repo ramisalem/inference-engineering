@@ -100,8 +100,10 @@ def post_stream(url: str, payload: dict, timeout: float = 600.0):
 
 
 def stream_openai(base_url: str, model: str, messages: list[dict], max_tokens: int,
-                  temperature: float, seed: int) -> dict:
-    """One streamed chat completion via the OpenAI-compatible API."""
+                  temperature: float, seed: int, extra: dict | None = None) -> dict:
+    """One streamed chat completion via the OpenAI-compatible API.
+    Reasoning models stream their thinking in a separate field; it is kept in the
+    returned text wrapped in <think>...</think>, so callers can tell it apart."""
     payload = {
         "model": model,
         "messages": messages,
@@ -110,12 +112,14 @@ def stream_openai(base_url: str, model: str, messages: list[dict], max_tokens: i
         "seed": seed,
         "stream": True,
         "stream_options": {"include_usage": True},  # ask for exact token counts at the end
+        **(extra or {}),
     }
     t0 = time.perf_counter()
     resp = post_stream(base_url.rstrip("/") + "/chat/completions", payload)
     chunk_times: list[float] = []
     text_parts: list[str] = []
     usage = None
+    thinking = False
     for raw in resp:  # Server-Sent Events: one "data: {...}" line per chunk
         line = raw.decode("utf-8", errors="replace").strip()
         if not line.startswith("data:"):
@@ -131,10 +135,22 @@ def stream_openai(base_url: str, model: str, messages: list[dict], max_tokens: i
             usage = chunk["usage"]
         for choice in chunk.get("choices") or []:
             delta = choice.get("delta") or {}
-            piece = delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning")
+            thought = delta.get("reasoning_content") or delta.get("reasoning")
+            piece = delta.get("content")
+            if thought:
+                if not thinking:
+                    text_parts.append("<think>")
+                    thinking = True
+                chunk_times.append(time.perf_counter())
+                text_parts.append(thought)
             if piece:
+                if thinking:
+                    text_parts.append("</think>")
+                    thinking = False
                 chunk_times.append(time.perf_counter())
                 text_parts.append(piece)
+    if thinking:
+        text_parts.append("</think>")
     t_end = time.perf_counter()
     resp.close()
     return summarize(t0, chunk_times, t_end, "".join(text_parts),

@@ -37,6 +37,10 @@ Vendor speed numbers ("up to 3.6x") are the vendor's own and rarely reproduce on
   Evaluation, fine-tuning, distillation; how public speed/price/quality leaderboards are measured. Use for: Lesson 3.
 - ✓ [Article: "Your AI Product Needs Evals", Hamel Husain (2024)](https://hamel.dev/blog/posts/evals/) and [HF Evaluation Guidebook](https://huggingface.co/spaces/OpenEvals/evaluation-guidebook)
   Practical evals: unit tests, model/human eval, A/B. Use for: Lessons 3 and 17.
+- ✓ [Blog: "Qwen3: Think Deeper, Act Faster", Qwen team (2025)](https://qwenlm.github.io/blog/qwen3/) (checked 2026-10-24)
+  Hybrid thinking/non-thinking modes ("quick, near-instant responses" vs step-by-step), performance "directly correlated with the computational reasoning budget", six dense sizes 0.6B–32B, "open-weighted ... under Apache 2.0 license". `/no_think` switch documented, but didn't work on Ollama 0.40 (use `reasoning_effort: "none"`). Use for: Lesson 3 (reasoning models, open licenses), Lesson 16 (speculative decoding with a 0.6B draft).
+- ✓ [License: Llama 3.2 Community License, Meta](https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE) (checked 2026-10-24; dev.meta.ai links 404, use the GitHub copy)
+  "Built with Llama" display requirement, derived names must start with "Llama", >700M MAU on the release date must "request a license from Meta". Use for: Lesson 3 (open ≠ no terms).
 - ✓ [Docs: "Usage", Ollama API](https://docs.ollama.com/api/usage)
   Server-side timing fields (`load_duration`, `prompt_eval_duration` for *uncached* prompt tokens, `eval_duration`, in nanoseconds). Use for: `stream_probe.py --server-timings`.
 - ✓ [Docs: "OpenAI compatibility", Ollama](https://docs.ollama.com/api/openai-compatibility)
